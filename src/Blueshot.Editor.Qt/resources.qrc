@@ -1,0 +1,52 @@
+<RCC>
+  <qresource prefix="/win">
+    <file alias="folder-open-image.png">../Blueshot/icons/folder-open-image.png</file>
+    <file alias="picture_save.png">../Blueshot/icons/picture_save.png</file>
+    <file alias="picture_to_clipboard.png">../Blueshot/icons/picture_to_clipboard.png</file>
+    <file alias="cut.png">../Blueshot/icons/cut.png</file>
+    <file alias="page_copy.png">../Blueshot/icons/page_copy.png</file>
+    <file alias="shape_paste.png">../Blueshot/icons/shape_paste.png</file>
+    <file alias="undo.png">../Blueshot/icons/undo.png</file>
+    <file alias="redo.png">../Blueshot/icons/redo.png</file>
+    <file alias="wrench.png">../Blueshot/icons/wrench.png</file>
+    <file alias="help.png">../Blueshot/icons/help.png</file>
+    <file alias="text_bold.png">../Blueshot/icons/text_bold.png</file>
+    <file alias="text_italic.png">../Blueshot/icons/text_italic.png</file>
+    <file alias="shadow.png">../Blueshot/icons/shadow.png</file>
+    <file alias="fugue/cursor.png">../Blueshot/icons/fugue/cursor.png</file>
+    <file alias="shape_square_add.png">../Blueshot/icons/shape_square_add.png</file>
+    <file alias="shape_ellipse_add.png">../Blueshot/icons/shape_ellipse_add.png</file>
+    <file alias="shape_line.png">../Blueshot/icons/shape_line.png</file>
+    <file alias="shape_arrow_add.png">../Blueshot/icons/shape_arrow_add.png</file>
+    <file alias="freehand.png">../Blueshot/icons/freehand.png</file>
+    <file alias="text_dropcaps.png">../Blueshot/icons/text_dropcaps.png</file>
+    <file alias="heart.png">../Blueshot/icons/heart.png</file>
+    <file alias="highlighter.png">../Blueshot/icons/highlighter.png</file>
+    <file alias="filter_pixelate.png">../Blueshot/icons/filter_pixelate.png</file>
+    <file alias="filter_blur.png">../Blueshot/icons/filter_blur.png</file>
+    <file alias="ruler-crop.png">../Blueshot/icons/ruler-crop.png</file>
+    <file alias="layer-rotate.png">../Blueshot/icons/layer-rotate.png</file>
+    <file alias="layer-rotate-left.png">../Blueshot/icons/layer-rotate-left.png</file>
+    <file alias="applicationIcon/48.png">../Blueshot/icons/applicationIcon/48.png</file>
+    <file alias="fugue/filter_highlight_area.png">../Blueshot/icons/fugue/filter_highlight_area.png</file>
+    <file alias="fugue/filter_highlight_text.png">../Blueshot/icons/fugue/filter_highlight_text.png</file>
+    <file alias="fugue/filter_highlight_grayscale.png">../Blueshot/icons/fugue/filter_highlight_grayscale.png</file>
+    <file alias="fugue/edit-pixelate.png">../Blueshot/icons/fugue/edit-pixelate.png</file>
+    <file alias="fugue/edit-blur.png">../Blueshot/icons/fugue/edit-blur.png</file>
+    <file alias="fugue/magnifier.png">../Blueshot/icons/fugue/magnifier.png</file>
+    <file alias="fugue/highlighter-text.png">../Blueshot/icons/fugue/highlighter-text.png</file>
+    <file alias="fugue/edit-alignment.png">../Blueshot/icons/fugue/edit-alignment.png</file>
+    <file alias="fugue/edit-alignment-center.png">../Blueshot/icons/fugue/edit-alignment-center.png</file>
+    <file alias="fugue/edit-alignment-right.png">../Blueshot/icons/fugue/edit-alignment-right.png</file>
+    <file alias="fugue/edit-vertical-alignment.png">../Blueshot/icons/fugue/edit-vertical-alignment.png</file>
+    <file alias="fugue/edit-vertical-alignment-top.png">../Blueshot/icons/fugue/edit-vertical-alignment-top.png</file>
+    <file alias="fugue/edit-vertical-alignment-middle.png">../Blueshot/icons/fugue/edit-vertical-alignment-middle.png</file>
+    <file alias="fugue/paint-can-color.png">../Blueshot/icons/fugue/paint-can-color.png</file>
+    <file alias="fugue/pencil-color.png">../Blueshot/icons/fugue/pencil-color.png</file>
+  </qresource>
+  <qresource prefix="/editor">
+    <file alias="balloon.png">../Blueshot.Editor/icons/balloon.png</file>
+    <file alias="notification-counter-01.png">../Blueshot.Editor/icons/notification-counter-01.png</file>
+    <file alias="resize.png">../Blueshot.Editor/icons/resize.png</file>
+  </qresource>
+</RCC>
