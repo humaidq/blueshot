@@ -207,6 +207,12 @@ void CanvasWidget::setDocumentImage(const QImage& image) {
     m_isMovingSelection = false;
     m_previewAnnotation = Annotation{};
     m_isDrawingAnnotation = false;
+    m_moveUndoRecorded = false;
+    m_resizeUndoRecorded = false;
+    m_selectionMoved = false;
+    m_selectionResized = false;
+    m_savedState = captureDocumentState();
+    m_hasSavedState = true;
     updateCanvasSize();
     updateUndoRedoState();
     m_modified = false;
@@ -232,6 +238,12 @@ void CanvasWidget::clearDocument() {
     m_isMovingSelection = false;
     m_previewAnnotation = Annotation{};
     m_isDrawingAnnotation = false;
+    m_moveUndoRecorded = false;
+    m_resizeUndoRecorded = false;
+    m_selectionMoved = false;
+    m_selectionResized = false;
+    m_savedState = DocumentState{};
+    m_hasSavedState = false;
     updateCanvasSize();
     updateUndoRedoState();
     m_modified = false;
@@ -250,11 +262,12 @@ bool CanvasWidget::isModified() const {
 }
 
 void CanvasWidget::markSaved() {
-    if (!m_modified) {
-        return;
+    m_savedState = captureDocumentState();
+    m_hasSavedState = hasDocument();
+    if (m_modified) {
+        m_modified = false;
+        Q_EMIT modifiedChanged(false);
     }
-    m_modified = false;
-    Q_EMIT modifiedChanged(false);
 }
 
 QColor CanvasWidget::currentStrokeColor() const {
@@ -385,7 +398,7 @@ QImage CanvasWidget::renderDocumentImage() const {
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     for (const Annotation& annotation : m_annotations) {
-        drawAnnotation(painter, annotation, 1.0);
+        drawAnnotation(painter, annotation, 1.0, &rendered);
     }
 
     return rendered;
@@ -831,6 +844,7 @@ void CanvasWidget::applyDocumentState(const DocumentState& state) {
         maxStepSequence = qMax(maxStepSequence, annotation.stepSequence);
     }
     m_nextStepSequence = qMax<qint64>(1, maxStepSequence + 1);
+    syncModifiedState();
     updateCanvasSize();
     Q_EMIT documentSizeChanged(documentSize());
     Q_EMIT editingContextChanged(editingContext());
@@ -838,6 +852,16 @@ void CanvasWidget::applyDocumentState(const DocumentState& state) {
 
 CanvasWidget::DocumentState CanvasWidget::captureDocumentState() const {
     return DocumentState{m_documentImage, m_annotations};
+}
+
+void CanvasWidget::syncModifiedState() {
+    const bool modified = m_hasSavedState && captureDocumentState() != m_savedState;
+    if (m_modified == modified) {
+        return;
+    }
+
+    m_modified = modified;
+    Q_EMIT modifiedChanged(m_modified);
 }
 
 void CanvasWidget::transformAnnotation(Annotation& annotation, const QTransform& transform, bool scaleFont, qreal fontScale) const {
@@ -1051,11 +1075,8 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     }
 
     const QRect targetRect(QPoint(0, 0), size());
-    painter.drawImage(targetRect, m_documentImage);
-
-    for (const Annotation& annotation : m_annotations) {
-        drawAnnotation(painter, annotation, m_zoomFactor);
-    }
+    const QImage renderedImage = renderDocumentImage();
+    painter.drawImage(targetRect, renderedImage);
 
     if (m_activeTool == QStringLiteral("Cursor")) {
         for (int index = 0; index < m_annotations.size(); ++index) {
@@ -1076,7 +1097,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     }
 
     if (m_isDrawingAnnotation) {
-        drawAnnotation(painter, m_previewAnnotation, m_zoomFactor);
+        drawAnnotation(painter, m_previewAnnotation, m_zoomFactor, &renderedImage);
     }
 }
 
@@ -1097,6 +1118,10 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
         m_activeResizeHandle = hitTestResizeHandle(imagePoint);
         m_isResizingSelection = m_primarySelectedAnnotationIndex >= 0 && m_activeResizeHandle != ResizeHandle::None;
         m_isMovingSelection = hitIndex >= 0 && !m_isResizingSelection;
+        m_moveUndoRecorded = false;
+        m_resizeUndoRecorded = false;
+        m_selectionMoved = false;
+        m_selectionResized = false;
         if (hasSelection()) {
             Q_EMIT statusMessageChanged(m_isResizingSelection ? QStringLiteral("Resize handle selected.") : QStringLiteral("Object selected."));
         } else {
@@ -1369,16 +1394,18 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
     const QPointF imagePoint = toImagePoint(event->position());
 
     if (m_isResizingSelection && m_primarySelectedAnnotationIndex >= 0 && m_primarySelectedAnnotationIndex < m_annotations.size()) {
-        resizeSelectedAnnotation(m_activeResizeHandle, imagePoint);
-        update();
+        if (resizeSelectedAnnotation(m_activeResizeHandle, imagePoint, true)) {
+            update();
+        }
         return;
     }
 
     if (m_isMovingSelection && hasSelection()) {
         const QPointF delta = imagePoint - m_lastPointerImagePoint;
-        translateSelectedAnnotation(delta);
+        if (translateSelectedAnnotation(delta, true)) {
+            update();
+        }
         m_lastPointerImagePoint = imagePoint;
-        update();
         return;
     }
 
@@ -1401,15 +1428,25 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
     }
 
     if (m_isMovingSelection) {
+        const bool moved = m_selectionMoved;
         m_isMovingSelection = false;
-        Q_EMIT statusMessageChanged(QStringLiteral("Object moved."));
+        m_moveUndoRecorded = false;
+        m_selectionMoved = false;
+        if (moved) {
+            Q_EMIT statusMessageChanged(QStringLiteral("Object moved."));
+        }
         return;
     }
 
     if (m_isResizingSelection) {
+        const bool resized = m_selectionResized;
         m_isResizingSelection = false;
         m_activeResizeHandle = ResizeHandle::None;
-        Q_EMIT statusMessageChanged(QStringLiteral("Object resized."));
+        m_resizeUndoRecorded = false;
+        m_selectionResized = false;
+        if (resized) {
+            Q_EMIT statusMessageChanged(QStringLiteral("Object resized."));
+        }
         return;
     }
 
@@ -1493,9 +1530,10 @@ void CanvasWidget::keyPressEvent(QKeyEvent* event) {
         return;
     }
 
-    translateSelectedAnnotation(delta);
-    update();
-    Q_EMIT statusMessageChanged(QStringLiteral("Object nudged."));
+    if (translateSelectedAnnotation(delta)) {
+        update();
+        Q_EMIT statusMessageChanged(QStringLiteral("Object nudged."));
+    }
 }
 
 void CanvasWidget::wheelEvent(QWheelEvent* event) {
@@ -1538,11 +1576,18 @@ QRectF CanvasWidget::normalizedClampedRect(const QPointF& start, const QPointF& 
     return rect.intersected(bounds);
 }
 
+QRectF CanvasWidget::textLayoutRect(const Annotation& annotation) const {
+    const QRectF textBox = normalizedClampedRect(annotation.start, annotation.end);
+    QFontMetricsF metrics(annotation.font);
+    return metrics.boundingRect(
+        textBox,
+        annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap,
+        annotation.text);
+}
+
 QRectF CanvasWidget::annotationBounds(const Annotation& annotation) const {
-    if (annotation.type == AnnotationType::Text) {
-        QFontMetricsF metrics(annotation.font);
-        const QRectF textRect = metrics.boundingRect(QRectF(annotation.start, QSizeF(10000.0, 10000.0)), Qt::TextWordWrap, annotation.text);
-        return textRect.translated(annotation.start - textRect.topLeft()).adjusted(-4.0, -4.0, 4.0, 4.0);
+    if (annotation.type == AnnotationType::Text || annotation.type == AnnotationType::Emoji || annotation.type == AnnotationType::TextHighlight) {
+        return textLayoutRect(annotation).adjusted(-4.0, -4.0, 4.0, 4.0);
     }
 
     if (annotation.type == AnnotationType::Freehand && !annotation.points.isEmpty()) {
@@ -2089,9 +2134,9 @@ void CanvasWidget::clearSelection() {
     emitSelectionAvailability();
 }
 
-void CanvasWidget::translateSelectedAnnotation(const QPointF& delta) {
+bool CanvasWidget::translateSelectedAnnotation(const QPointF& delta, bool groupUndoWithInteraction) {
     if (!hasSelection()) {
-        return;
+        return false;
     }
 
     QPointF boundedDelta = delta;
@@ -2102,58 +2147,63 @@ void CanvasWidget::translateSelectedAnnotation(const QPointF& delta) {
     }
 
     if (qFuzzyIsNull(boundedDelta.x()) && qFuzzyIsNull(boundedDelta.y())) {
-        return;
+        return false;
     }
 
-    if (!m_isMovingSelection) {
+    if (groupUndoWithInteraction) {
+        if (!m_moveUndoRecorded) {
+            pushUndoState();
+            m_moveUndoRecorded = true;
+        }
+    } else {
         pushUndoState();
-        m_isMovingSelection = true;
     }
 
     for (int index : m_selectedAnnotationIndices) {
         translateAnnotation(m_annotations[index], boundedDelta);
     }
+    if (groupUndoWithInteraction) {
+        m_selectionMoved = true;
+    }
+    return true;
 }
 
-void CanvasWidget::resizeSelectedAnnotation(ResizeHandle handle, const QPointF& imagePoint) {
+bool CanvasWidget::resizeSelectedAnnotation(ResizeHandle handle, const QPointF& imagePoint, bool groupUndoWithInteraction) {
     if (m_primarySelectedAnnotationIndex < 0 || m_primarySelectedAnnotationIndex >= m_annotations.size()) {
-        return;
+        return false;
     }
 
-    Annotation& annotation = m_annotations[m_primarySelectedAnnotationIndex];
-    if (!m_isResizingSelection) {
-        pushUndoState();
-        m_isResizingSelection = true;
-    }
+    const Annotation& currentAnnotation = m_annotations.at(m_primarySelectedAnnotationIndex);
+    Annotation resizedAnnotation = currentAnnotation;
 
     const QPointF point(qBound(0.0, imagePoint.x(), static_cast<qreal>(m_documentImage.width())), qBound(0.0, imagePoint.y(), static_cast<qreal>(m_documentImage.height())));
     switch (handle) {
     case ResizeHandle::LineStart:
-        annotation.start = point;
+        resizedAnnotation.start = point;
         break;
     case ResizeHandle::LineEnd:
-        annotation.end = point;
+        resizedAnnotation.end = point;
         break;
     case ResizeHandle::TopLeft:
-        annotation.start = point;
+        resizedAnnotation.start = point;
         break;
     case ResizeHandle::TopRight:
-        annotation.start.setY(point.y());
-        annotation.end.setX(point.x());
+        resizedAnnotation.start.setY(point.y());
+        resizedAnnotation.end.setX(point.x());
         break;
     case ResizeHandle::BottomLeft:
-        annotation.start.setX(point.x());
-        annotation.end.setY(point.y());
+        resizedAnnotation.start.setX(point.x());
+        resizedAnnotation.end.setY(point.y());
         break;
     case ResizeHandle::BottomRight:
-        annotation.end = point;
+        resizedAnnotation.end = point;
         break;
     case ResizeHandle::None:
         break;
     }
 
-    if (annotation.type == AnnotationType::Freehand) {
-        const QRectF currentBounds = annotationBounds(annotation);
+    if (resizedAnnotation.type == AnnotationType::Freehand) {
+        const QRectF currentBounds = annotationBounds(currentAnnotation);
         QRectF targetBounds = currentBounds;
         switch (handle) {
         case ResizeHandle::TopLeft:
@@ -2175,9 +2225,28 @@ void CanvasWidget::resizeSelectedAnnotation(ResizeHandle handle, const QPointF& 
         }
         targetBounds = targetBounds.normalized();
         if (targetBounds.width() >= 1.0 && targetBounds.height() >= 1.0) {
-            scaleAnnotationBounds(annotation, currentBounds, targetBounds);
+            scaleAnnotationBounds(resizedAnnotation, currentBounds, targetBounds);
         }
     }
+
+    if (resizedAnnotation == currentAnnotation) {
+        return false;
+    }
+
+    if (groupUndoWithInteraction) {
+        if (!m_resizeUndoRecorded) {
+            pushUndoState();
+            m_resizeUndoRecorded = true;
+        }
+    } else {
+        pushUndoState();
+    }
+
+    m_annotations[m_primarySelectedAnnotationIndex] = resizedAnnotation;
+    if (groupUndoWithInteraction) {
+        m_selectionResized = true;
+    }
+    return true;
 }
 
 void CanvasWidget::removeSelectedAnnotation() {
@@ -2458,7 +2527,7 @@ void CanvasWidget::updateUndoRedoState() {
     Q_EMIT redoAvailableChanged(canRedo());
 }
 
-void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotation, double scale) const {
+void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotation, double scale, const QImage* composedImage) const {
     QPen pen(annotation.strokeColor);
     pen.setWidth(qMax(1, qRound(annotation.strokeWidth * scale)));
     painter.setPen(pen);
@@ -2483,9 +2552,7 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
 
     if (annotation.type == AnnotationType::TextHighlight) {
         painter.setFont(annotation.font);
-        QFontMetricsF metrics(annotation.font);
-        QRectF textRect = metrics.boundingRect(QRectF(annotation.start, QSizeF(10000.0, 10000.0)), Qt::TextWordWrap, annotation.text);
-        textRect = textRect.translated(annotation.start - textRect.topLeft());
+        const QRectF textRect = textLayoutRect(annotation);
         const QRectF scaledTextRect(textRect.left() * scale, textRect.top() * scale, textRect.width() * scale, textRect.height() * scale);
         QColor highlight = annotation.fillColor;
         highlight.setAlpha(160);
@@ -2594,22 +2661,23 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
         rect.height() * scale);
 
     if (annotation.type == AnnotationType::Pixelate || annotation.type == AnnotationType::Blur || annotation.type == AnnotationType::Grayscale || annotation.type == AnnotationType::Magnify) {
-        const QRect sourceRect = rect.toAlignedRect().intersected(QRect(0, 0, m_documentImage.width(), m_documentImage.height()));
+        const QImage& sourceImage = composedImage != nullptr ? *composedImage : m_documentImage;
+        const QRect sourceRect = rect.toAlignedRect().intersected(sourceImage.rect());
         if (!sourceRect.isEmpty()) {
             QImage cropped;
             if (annotation.type == AnnotationType::Pixelate) {
-                cropped = createRedactionFill(m_documentImage, sourceRect, annotation.effectSeed);
+                cropped = createRedactionFill(sourceImage, sourceRect, annotation.effectSeed);
             } else if (annotation.type == AnnotationType::Blur) {
-                cropped = m_documentImage.copy(sourceRect);
+                cropped = sourceImage.copy(sourceRect);
                 const int blurFactor = qMax(2, annotation.blurRadius);
                 const QSize smallSize(qMax(1, cropped.width() / blurFactor), qMax(1, cropped.height() / blurFactor));
                 cropped = cropped.scaled(smallSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
                 cropped = cropped.scaled(sourceRect.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             } else if (annotation.type == AnnotationType::Grayscale) {
-                cropped = m_documentImage.copy(sourceRect);
+                cropped = sourceImage.copy(sourceRect);
                 cropped = cropped.convertToFormat(QImage::Format_Grayscale8).convertToFormat(QImage::Format_ARGB32);
             } else {
-                cropped = m_documentImage.copy(sourceRect);
+                cropped = sourceImage.copy(sourceRect);
                 const QSize zoomedSize(qMax(1, sourceRect.width() * annotation.magnificationFactor), qMax(1, sourceRect.height() * annotation.magnificationFactor));
                 cropped = cropped.scaled(zoomedSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
                 const QRect centerCrop((cropped.width() - sourceRect.width()) / 2, (cropped.height() - sourceRect.height()) / 2, sourceRect.width(), sourceRect.height());

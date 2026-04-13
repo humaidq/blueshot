@@ -159,11 +159,15 @@ private:
         bool shadowEnabled = false;
         qint64 stepSequence = -1;
         quint32 effectSeed = 0;
+
+        bool operator==(const Annotation& other) const = default;
     };
 
     struct DocumentState {
         QImage image;
         QVector<Annotation> annotations;
+
+        bool operator==(const DocumentState& other) const = default;
     };
 
     struct ToolStyleState {
@@ -193,6 +197,7 @@ private:
     void updateCanvasSize();
     [[nodiscard]] QPointF toImagePoint(const QPointF& widgetPoint) const;
     [[nodiscard]] QRectF normalizedClampedRect(const QPointF& start, const QPointF& end) const;
+    [[nodiscard]] QRectF textLayoutRect(const Annotation& annotation) const;
     [[nodiscard]] QRectF annotationBounds(const Annotation& annotation) const;
     [[nodiscard]] ResizeHandle hitTestResizeHandle(const QPointF& imagePoint) const;
     [[nodiscard]] QRectF cropRect() const;
@@ -221,13 +226,14 @@ private:
     void clearSelection();
     void applyDocumentState(const DocumentState& state);
     [[nodiscard]] DocumentState captureDocumentState() const;
+    void syncModifiedState();
     void transformAnnotation(Annotation& annotation, const QTransform& transform, bool scaleFont = false, qreal fontScale = 1.0) const;
     void translateAnnotation(Annotation& annotation, const QPointF& delta) const;
     void offsetAnnotation(Annotation& annotation, const QPointF& delta, bool regenerateStepSequence) const;
     void scaleAnnotationBounds(Annotation& annotation, const QRectF& sourceBounds, const QRectF& destinationBounds) const;
     void reassignClonedAnnotationMetadata(Annotation& annotation);
-    void translateSelectedAnnotation(const QPointF& delta);
-    void resizeSelectedAnnotation(ResizeHandle handle, const QPointF& imagePoint);
+    bool translateSelectedAnnotation(const QPointF& delta, bool groupUndoWithInteraction = false);
+    bool resizeSelectedAnnotation(ResizeHandle handle, const QPointF& imagePoint, bool groupUndoWithInteraction = false);
     void removeSelectedAnnotation();
     void applyCrop(const QRectF& cropRect);
     void applyCropMode(const QRectF& cropRect);
@@ -236,7 +242,7 @@ private:
     void pushUndoState();
     void commitAnnotation(const Annotation& annotation);
     void updateUndoRedoState();
-    void drawAnnotation(QPainter& painter, const Annotation& annotation, double scale) const;
+    void drawAnnotation(QPainter& painter, const Annotation& annotation, double scale, const QImage* composedImage = nullptr) const;
     void drawSelection(QPainter& painter, const Annotation& annotation, double scale) const;
     void drawResizeHandles(QPainter& painter, const Annotation& annotation, double scale) const;
     void drawPendingCrop(QPainter& painter, double scale) const;
@@ -246,6 +252,7 @@ private:
     QVector<Annotation> m_annotations;
     QVector<DocumentState> m_undoStates;
     QVector<DocumentState> m_redoStates;
+    DocumentState m_savedState;
     QString m_activeTool = QStringLiteral("Cursor");
     QColor m_strokeColor = QColor(QStringLiteral("#cc2f2f"));
     QColor m_fillColor = QColor(QStringLiteral("#fff2cc"));
@@ -268,6 +275,11 @@ private:
     bool m_isMovingSelection = false;
     bool m_isResizingSelection = false;
     bool m_hasPendingCrop = false;
+    bool m_hasSavedState = false;
+    bool m_moveUndoRecorded = false;
+    bool m_resizeUndoRecorded = false;
+    bool m_selectionMoved = false;
+    bool m_selectionResized = false;
     int m_primarySelectedAnnotationIndex = -1;
     QSet<int> m_selectedAnnotationIndices;
     ResizeHandle m_activeResizeHandle = ResizeHandle::None;

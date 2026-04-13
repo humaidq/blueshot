@@ -32,3 +32,25 @@ A Nix devshell is provided. If you have nix-direnv setup on your system, it shou
 ```
 nix develop
 ```
+
+### Qt build
+
+The desktop editor in this repository lives in `src/Blueshot.Editor.Qt` and can be built with CMake and Qt 6:
+
+```sh
+cmake -S src/Blueshot.Editor.Qt -B build -GNinja -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+```
+
+### GitHub Actions
+
+GitHub Actions builds the Qt app on Linux, Windows, and macOS.
+
+- Pushes to `main` and pull requests run the full build matrix and upload artifacts.
+- Tags matching `v*` also publish the packaged artifacts to the corresponding GitHub Release.
+
+Release artifacts currently use these formats:
+
+- Linux: `.tar.gz`
+- Windows: `.zip`
+- macOS: `.zip` containing the `.app` bundle
