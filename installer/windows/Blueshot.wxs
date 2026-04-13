@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Blueshot"
+    Manufacturer="Humaid Alqasimi"
+    Version="$(ProductVersion)"
+    UpgradeCode="D8ECA0C0-ABB6-4263-B09B-24D8F5AEEBEC"
+    Scope="perMachine">
+
+    <SummaryInformation Description="Blueshot screenshot editor" Manufacturer="Humaid Alqasimi" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of Blueshot is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <StandardDirectory Id="ProgramFiles6432Folder">
+      <Directory Id="INSTALLFOLDER" Name="Blueshot" />
+    </StandardDirectory>
+
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="BlueshotProgramMenuFolder" Name="Blueshot" />
+    </StandardDirectory>
+
+    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+      <Files Include="!(bindpath.BuildOutput)\**" />
+    </ComponentGroup>
+
+    <ComponentGroup Id="AppShortcuts" Directory="BlueshotProgramMenuFolder">
+      <Component Guid="*">
+        <Shortcut
+          Id="BlueshotStartMenuShortcut"
+          Name="Blueshot"
+          Target="[INSTALLFOLDER]Blueshot.Editor.Qt.exe"
+          WorkingDirectory="INSTALLFOLDER" />
+        <RemoveFolder Id="RemoveBlueshotProgramMenuFolder" On="uninstall" />
+        <RegistryValue
+          Root="HKLM"
+          Key="Software\Humaid Alqasimi\Blueshot"
+          Name="Installed"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="MainFeature" Title="Blueshot" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentGroupRef Id="AppShortcuts" />
+    </Feature>
+  </Package>
+</Wix>

@@ -42,7 +42,7 @@ cmake -S src/Blueshot.Editor.Qt -B build -GNinja -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-On Windows, use a matching Qt + compiler toolchain. The GitHub Actions build uses MSYS2 `MINGW64`, so local Windows builds should use the same stack instead of mixing MinGW with an MSVC Qt installation.
+On Windows, use a matching Qt + compiler toolchain. The GitHub Actions build uses MSYS2 `MINGW64` for x64 and MSVC + Qt for arm64, so local Windows builds should follow the same pairing instead of mixing MinGW with an MSVC Qt installation.
 
 ### GitHub Actions
 
@@ -54,5 +54,5 @@ GitHub Actions builds the Qt app on Linux, Windows, and macOS.
 Release artifacts currently use these formats:
 
 - Linux: `.tar.gz`
-- Windows: `.zip`
+- Windows: `.zip` and WiX v4 `.msi`
 - macOS: `.zip` containing the `.app` bundle
