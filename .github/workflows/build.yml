@@ -28,9 +28,6 @@ jobs:
             archive_name: blueshot-linux-x64.tar.gz
           - name: Windows
             runs_on: windows-latest
-            qt_host: windows
-            qt_target: desktop
-            qt_arch: win64_msvc2022_64
             archive_name: blueshot-windows-x64.zip
           - name: macOS
             runs_on: macos-13
@@ -41,10 +38,24 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Ninja
-        uses: seanmiddleditch/gha-setup-ninja@v5
+        if: runner.os != 'Windows'
+        uses: seanmiddleditch/gha-setup-ninja@v6
+
+      - name: Set up MSYS2
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-tools
 
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
@@ -56,6 +67,7 @@ jobs:
             libxkbcommon-dev
 
       - name: Install Qt
+        if: runner.os != 'Windows'
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.8.2"
@@ -65,23 +77,44 @@ jobs:
           cache: true
 
       - name: Configure CMake
+        if: runner.os != 'Windows'
         run: >-
           cmake -S src/Blueshot.Editor.Qt -B build -GNinja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_PREFIX_PATH=${{ env.QT_ROOT_DIR }}
           -DCMAKE_INSTALL_PREFIX=${{ github.workspace }}/stage
 
+      - name: Configure CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: >-
+          cmake -S src/Blueshot.Editor.Qt -B build -GNinja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/stage"
+
       - name: Build
+        if: runner.os != 'Windows'
+        run: cmake --build build --parallel
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
         run: cmake --build build --parallel
 
       - name: Install
+        if: runner.os != 'Windows'
+        run: cmake --install build
+
+      - name: Install (Windows)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
         run: cmake --install build
 
       - name: Bundle Windows runtime
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          windeployqt --release --compiler-runtime "${env:GITHUB_WORKSPACE}\stage\bin\Blueshot.Editor.Qt.exe"
+          windeployqt --release "${GITHUB_WORKSPACE}/stage/bin/Blueshot.Editor.Qt.exe"
 
       - name: Bundle macOS runtime
         if: runner.os == 'macOS'
@@ -109,7 +142,7 @@ jobs:
             "dist/${{ matrix.archive_name }}"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.archive_name }}
           path: dist/${{ matrix.archive_name }}
