@@ -3,7 +3,7 @@
   <Package
     Name="Blueshot"
     Manufacturer="Humaid Alqasimi"
-    Version="$(ProductVersion)"
+    Version="0.1.0"
     UpgradeCode="D8ECA0C0-ABB6-4263-B09B-24D8F5AEEBEC"
     Scope="perMachine">
 

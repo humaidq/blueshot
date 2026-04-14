@@ -185,12 +185,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          wix build `
-            -arch ${{ matrix.wix_arch }} `
-            -b BuildOutput="${env:GITHUB_WORKSPACE}\stage\bin" `
-            -dProductVersion="0.1.0" `
-            -out "${env:GITHUB_WORKSPACE}\dist\${{ matrix.installer_name }}" `
-            installer\windows\Blueshot.wxs
+          wix build -arch ${{ matrix.wix_arch }} -b "BuildOutput=${env:GITHUB_WORKSPACE}\stage\bin" -out "${env:GITHUB_WORKSPACE}\dist\${{ matrix.installer_name }}" installer\windows\Blueshot.wxs
 
       - name: Create macOS archive
         if: runner.os == 'macOS'
