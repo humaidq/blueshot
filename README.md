@@ -1,6 +1,6 @@
 # Blueshot Editor
 
-Blueshot is a port of Greenshot's editor for Linux. It brings in the powerful
+Blueshot is a cross-platform port of Greenshot's editor. It brings in the powerful
 photo annotation features.
 
 ![Blueshot screenshot](./screenshot.png)

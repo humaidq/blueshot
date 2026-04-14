@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Blueshot
+Comment=Blueshot screenshot editor
+Exec=@BLUESHOT_EXECUTABLE_NAME@ %f
+Icon=@BLUESHOT_APP_ID@
+Terminal=false
+Categories=Graphics;Utility;
+StartupNotify=true
+StartupWMClass=Blueshot.Editor.Qt
+MimeType=image/png;image/jpeg;image/bmp;image/gif;image/tiff;image/webp;

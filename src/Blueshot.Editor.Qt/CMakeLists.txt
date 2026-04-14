@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 3.25)
 
 project(BlueshotEditorQt VERSION 0.1.0 LANGUAGES CXX)
 
-set(BLUESHOT_APP_ID "io.github.humaidq.blueshot")
+set(BLUESHOT_APP_ID "ae.humaidq.blueshot")
+set(BLUESHOT_EXECUTABLE_NAME "Blueshot.Editor.Qt" CACHE STRING "Executable name used in the Linux desktop entry")
 
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -48,6 +49,10 @@ target_include_directories(Blueshot.Editor.Qt PRIVATE
     "${QT_INCLUDE_ROOT}"
 )
 
+target_compile_options(Blueshot.Editor.Qt PRIVATE
+    "-I${QT_INCLUDE_ROOT}"
+)
+
 target_compile_definitions(Blueshot.Editor.Qt PRIVATE
     QT_NO_KEYWORDS
 )
@@ -62,6 +67,14 @@ set_target_properties(Blueshot.Editor.Qt PROPERTIES
     WIN32_EXECUTABLE TRUE
 )
 
+if(UNIX AND NOT APPLE)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/ae.humaidq.blueshot.desktop.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/${BLUESHOT_APP_ID}.desktop"
+        @ONLY
+    )
+endif()
+
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(Blueshot.Editor.Qt)
 endif()
@@ -70,3 +83,15 @@ install(TARGETS Blueshot.Editor.Qt
     BUNDLE DESTINATION .
     RUNTIME DESTINATION bin
 )
+
+if(UNIX AND NOT APPLE)
+    install(FILES
+        "${CMAKE_CURRENT_BINARY_DIR}/${BLUESHOT_APP_ID}.desktop"
+        DESTINATION share/applications
+    )
+    install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../Blueshot/icons/applicationIcon/48.png"
+        DESTINATION share/icons/hicolor/48x48/apps
+        RENAME "${BLUESHOT_APP_ID}.png"
+    )
+endif()

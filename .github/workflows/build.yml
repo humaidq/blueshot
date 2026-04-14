@@ -247,7 +247,7 @@ jobs:
             foreach ($child in $children) {
               $name = [System.Security.SecurityElement]::Escape($child.Name)
               $padding = ' ' * $indent
-              $lines.Add("$padding<Directory Id=\"$($child.Id)\" Name=\"$name\">")
+              $lines.Add("$padding<Directory Id=""$($child.Id)"" Name=""$name"">")
               Write-DirectoryNodes $child.RelativeDir ($indent + 2)
               $lines.Add("$padding</Directory>")
             }
@@ -272,8 +272,8 @@ jobs:
             $fileId = Get-HashId 'FIL_' $relativePath
             $source = [System.Security.SecurityElement]::Escape($file.FullName)
 
-            $lines.Add("      <Component Id=\"$componentId\" Directory=\"$directoryId\" Guid=\"*\">")
-            $lines.Add("        <File Id=\"$fileId\" Source=\"$source\" KeyPath=\"yes\" />")
+            $lines.Add("      <Component Id=""$componentId"" Directory=""$directoryId"" Guid=""*"">")
+            $lines.Add("        <File Id=""$fileId"" Source=""$source"" KeyPath=""yes"" />")
             $lines.Add('      </Component>')
           }
 

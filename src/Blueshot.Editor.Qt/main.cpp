@@ -1,13 +1,16 @@
 #include "MainWindow.h"
 
-#include <QtGui/QIcon>
-#include <QtWidgets/QApplication>
+#include <QApplication>
+#include <QCoreApplication>
+#include <QGuiApplication>
+#include <QIcon>
 
 int main(int argc, char* argv[]) {
+    QCoreApplication::setApplicationName(QStringLiteral("Blueshot Editor"));
+    QCoreApplication::setOrganizationName(QStringLiteral("Blueshot"));
+    QGuiApplication::setDesktopFileName(QStringLiteral("ae.humaidq.blueshot"));
+
     QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("Blueshot Editor"));
-    app.setOrganizationName(QStringLiteral("Blueshot"));
-    app.setDesktopFileName(QStringLiteral("io.github.humaidq.blueshot"));
     app.setWindowIcon(QIcon(QStringLiteral(":/win/applicationIcon/48.png")));
 
     const QString initialFilePath = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QString();

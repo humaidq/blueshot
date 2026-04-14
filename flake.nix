@@ -87,7 +87,8 @@
 
             configurePhase = ''
               runHook preConfigure
-              cmake -S src/Blueshot.Editor.Qt -B build -GNinja
+              cmake -S src/Blueshot.Editor.Qt -B build -GNinja \
+                -DBLUESHOT_EXECUTABLE_NAME=blueshot
               runHook postConfigure
             '';
 

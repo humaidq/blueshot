@@ -1,10 +1,10 @@
 #pragma once
 
-#include <QtGui/QImage>
-#include <QtCore/QHash>
-#include <QtCore/QSize>
-#include <QtWidgets/QMainWindow>
-#include <QtCore/QString>
+#include <QHash>
+#include <QImage>
+#include <QMainWindow>
+#include <QSize>
+#include <QString>
 
 class QAction;
 class QActionGroup;
@@ -12,6 +12,7 @@ class CanvasWidget;
 class QComboBox;
 class QFrame;
 class QLabel;
+class QLineEdit;
 class QObject;
 class QScrollArea;
 class QSpinBox;
@@ -80,8 +81,11 @@ private Q_SLOTS:
     void applyTornEdgesEffect();
     void chooseFillColor();
     void chooseLineColor();
+    void selectEmojiFromToolbar();
+    void emojiTextEditingFinished();
 
 private:
+    void syncCanvasWorkspaceSize();
     void closeEvent(QCloseEvent* event) override;
     void createMenus();
     void createToolBars();
@@ -93,11 +97,14 @@ private:
     void setStatusMessage(const QString& message);
     void setZoomFactor(double zoomFactor);
     void updateColorButton(QToolButton* button, const QColor& color, const QString& iconPath);
+    void updateEmojiButton();
     void updateAlignmentButtons();
     void refreshPropertyVisibility(const QString& context);
     void syncPropertyControlsFromCanvas();
     bool confirmCloseWithUnsavedChanges();
     void updateWindowTitle();
+    QString chooseEmoji(const QString& initialEmoji);
+    bool tryOpenNativeEmojiPicker(QWidget* targetWidget);
     QAction* addToolAction(QActionGroup* group, QToolBar* toolbar, const QString& iconPath, const QString& toolName, bool checked = false);
     void activateToolByName(const QString& toolName);
     QAction* addToolbarButton(QToolBar* toolbar, const QString& iconPath, const QString& text, const QObject* receiver, const char* member, bool enabled = true);
@@ -116,6 +123,7 @@ private:
     QComboBox* m_lineWidthComboBox = nullptr;
     QComboBox* m_fontFamilyComboBox = nullptr;
     QComboBox* m_fontSizeComboBox = nullptr;
+    QLineEdit* m_emojiLineEdit = nullptr;
     QComboBox* m_arrowHeadComboBox = nullptr;
     QComboBox* m_pixelSizeComboBox = nullptr;
     QComboBox* m_blurRadiusComboBox = nullptr;
@@ -127,12 +135,16 @@ private:
     QToolButton* m_horizontalAlignmentButton = nullptr;
     QToolButton* m_verticalAlignmentButton = nullptr;
     QScrollArea* m_scrollArea = nullptr;
+    QWidget* m_canvasWorkspace = nullptr;
+    QToolBar* m_propertiesToolbar = nullptr;
     QAction* m_fillColorAction = nullptr;
     QAction* m_lineColorAction = nullptr;
     QAction* m_lineWidthAction = nullptr;
     QAction* m_fontLabelAction = nullptr;
     QAction* m_fontFamilyAction = nullptr;
     QAction* m_fontSizeAction = nullptr;
+    QAction* m_emojiAction = nullptr;
+    QAction* m_emojiTextAction = nullptr;
     QAction* m_horizontalAlignmentAction = nullptr;
     QAction* m_verticalAlignmentAction = nullptr;
     QAction* m_arrowHeadLabelAction = nullptr;
@@ -165,6 +177,7 @@ private:
     QAction* m_shadowAction = nullptr;
     QAction* m_confirmAction = nullptr;
     QAction* m_cancelAction = nullptr;
+    QToolButton* m_emojiButton = nullptr;
     QHash<QString, QAction*> m_toolActions;
     QString m_currentFilePath;
     double m_zoomFactor = 1.0;

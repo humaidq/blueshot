@@ -2,39 +2,45 @@
 
 #include "CanvasWidget.h"
 
-#include <QtGui/QAction>
-#include <QtGui/QActionGroup>
-#include <QtGui/QColor>
-#include <QtGui/QIcon>
-#include <QtGui/QPixmap>
-#include <QtGui/QImage>
-#include <QtCore/QList>
-#include <QtCore/QEvent>
-#include <QtCore/QtMath>
-#include <QtWidgets/QApplication>
-#include <QtWidgets/QComboBox>
-#include <QtWidgets/QColorDialog>
-#include <QtGui/QCloseEvent>
-#include <QtWidgets/QFileDialog>
-#include <QtGui/QClipboard>
-#include <QtCore/QFileInfo>
-#include <QtWidgets/QFrame>
-#include <QtWidgets/QGridLayout>
-#include <QtWidgets/QHBoxLayout>
-#include <QtWidgets/QLabel>
-#include <QtWidgets/QMenu>
-#include <QtWidgets/QMenuBar>
-#include <QtWidgets/QMessageBox>
-#include <QtWidgets/QScrollArea>
-#include <QtWidgets/QSizePolicy>
-#include <QtWidgets/QInputDialog>
-#include <QtWidgets/QStatusBar>
-#include <QtWidgets/QSpinBox>
-#include <QtWidgets/QToolBar>
-#include <QtWidgets/QToolButton>
-#include <QtWidgets/QVBoxLayout>
-#include <QtWidgets/QWidget>
-#include <QtGui/QKeySequence>
+#include <QAction>
+#include <QActionGroup>
+#include <QApplication>
+#include <QClipboard>
+#include <QCloseEvent>
+#include <QColor>
+#include <QColorDialog>
+#include <QComboBox>
+#include <QDialog>
+#include <QEvent>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFrame>
+#include <QGridLayout>
+#include <QHBoxLayout>
+#include <QIcon>
+#include <QImage>
+#include <QInputDialog>
+#include <QKeySequence>
+#include <QLabel>
+#include <QList>
+#include <QLineEdit>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMessageBox>
+#include <QPixmap>
+#include <QProcess>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QSizePolicy>
+#include <QSpinBox>
+#include <QStatusBar>
+#include <QToolBar>
+#include <QToolButton>
+#include <QDialogButtonBox>
+#include <QTextBoundaryFinder>
+#include <QVBoxLayout>
+#include <QWidget>
+#include <QtMath>
 
 namespace {
 bool isTintMaskPixel(const QString& iconPath, int x, int y) {
@@ -92,6 +98,33 @@ QIcon createTintedToolbarIcon(const QString& iconPath, const QColor& color) {
 
     return QIcon(QPixmap::fromImage(image));
 }
+
+QColor chooseColor(QWidget* parent, const QColor& initialColor, const QString& title) {
+    QColorDialog dialog(initialColor, parent);
+    dialog.setWindowTitle(title);
+    dialog.setOption(QColorDialog::ShowAlphaChannel, true);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return QColor();
+    }
+
+    return dialog.currentColor();
+}
+
+QString normalizeSingleGrapheme(QString text) {
+    text = text.trimmed();
+    if (text.isEmpty()) {
+        return {};
+    }
+
+    QTextBoundaryFinder finder(QTextBoundaryFinder::Grapheme, text);
+    finder.toStart();
+    const int boundary = finder.toNextBoundary();
+    if (boundary <= 0 || boundary != text.size()) {
+        return {};
+    }
+    return text.left(boundary);
+}
 }
 
 MainWindow::MainWindow(const QString& initialFilePath, QWidget* parent) : QMainWindow(parent) {
@@ -104,16 +137,37 @@ QMainWindow {
 QMenuBar, QToolBar, QStatusBar {
     background: #f7f7f7;
 }
+QMenuBar {
+    margin: 0px;
+    padding: 0px 2px;
+}
+QMenuBar::item {
+    padding: 4px 8px;
+    margin: 0px 1px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+}
+QMenuBar::item:selected {
+    background: #ededed;
+    border: 1px solid #d4d4d4;
+}
+QMenuBar::item:pressed {
+    background: #e2e2e2;
+    border: 1px solid #c8c8c8;
+}
 QToolBar {
     border: none;
-    spacing: 2px;
-    padding: 4px 6px;
+    spacing: 0px;
+    padding: 0px 2px;
+}
+QToolBar::separator {
+    margin: 1px 2px;
 }
 QToolButton {
-    background: #f6f6f6;
-    border: 1px solid #c9c9c9;
+    background: transparent;
+    border: 1px solid transparent;
     padding: 4px;
-    margin: 1px;
+    margin: 0px;
 }
 QToolButton:hover {
     background: #ededed;
@@ -283,6 +337,7 @@ void MainWindow::createToolBars() {
     QToolBar* actionsToolbar = new QToolBar(QStringLiteral("Actions"), this);
     actionsToolbar->setMovable(false);
     actionsToolbar->setIconSize(QSize(16, 16));
+    actionsToolbar->setContentsMargins(0, 0, 0, 0);
     addToolBar(Qt::TopToolBarArea, actionsToolbar);
 
     addToolbarButton(actionsToolbar, QStringLiteral(":/win/folder-open-image.png"), QStringLiteral("Open"), this, SLOT(openImage()));
@@ -302,50 +357,64 @@ void MainWindow::createToolBars() {
     actionsToolbar->addSeparator();
     addToolbarButton(actionsToolbar, QStringLiteral(":/win/help.png"), QStringLiteral("Help"), this, SLOT(showAboutDialog()));
 
-    QToolBar* propertiesToolbar = new QToolBar(QStringLiteral("Properties"), this);
-    propertiesToolbar->setMovable(false);
-    propertiesToolbar->setIconSize(QSize(16, 16));
+    m_propertiesToolbar = new QToolBar(QStringLiteral("Properties"), this);
+    m_propertiesToolbar->setMovable(false);
+    m_propertiesToolbar->setIconSize(QSize(16, 16));
+    m_propertiesToolbar->setContentsMargins(0, 0, 0, 0);
     addToolBarBreak(Qt::TopToolBarArea);
-    addToolBar(Qt::TopToolBarArea, propertiesToolbar);
+    addToolBar(Qt::TopToolBarArea, m_propertiesToolbar);
 
     m_fillColorButton = new QToolButton(this);
     m_fillColorButton->setToolTip(QStringLiteral("Fill color"));
     m_fillColorButton->setAutoRaise(false);
     QObject::connect(m_fillColorButton, &QToolButton::clicked, this, &MainWindow::chooseFillColor);
     updateColorButton(m_fillColorButton, QColor(QStringLiteral("#fff2cc")), QStringLiteral(":/win/fugue/paint-can-color.png"));
-    m_fillColorAction = propertiesToolbar->addWidget(m_fillColorButton);
+    m_fillColorAction = m_propertiesToolbar->addWidget(m_fillColorButton);
 
     m_lineColorButton = new QToolButton(this);
     m_lineColorButton->setToolTip(QStringLiteral("Line color"));
     m_lineColorButton->setAutoRaise(false);
     QObject::connect(m_lineColorButton, &QToolButton::clicked, this, &MainWindow::chooseLineColor);
     updateColorButton(m_lineColorButton, QColor(QStringLiteral("#cc2f2f")), QStringLiteral(":/win/fugue/pencil-color.png"));
-    m_lineColorAction = propertiesToolbar->addWidget(m_lineColorButton);
+    m_lineColorAction = m_propertiesToolbar->addWidget(m_lineColorButton);
 
     m_lineWidthComboBox = new QComboBox(this);
     m_lineWidthComboBox->addItems({QStringLiteral("0 px"), QStringLiteral("1 px"), QStringLiteral("2 px"), QStringLiteral("3 px"), QStringLiteral("4 px")});
     m_lineWidthComboBox->setCurrentText(QStringLiteral("3 px"));
     m_lineWidthComboBox->setFixedWidth(72);
-    m_lineWidthAction = propertiesToolbar->addWidget(m_lineWidthComboBox);
+    m_lineWidthAction = m_propertiesToolbar->addWidget(m_lineWidthComboBox);
     QObject::connect(m_lineWidthComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setStrokeWidthPreset);
 
     m_fontLabel = new QLabel(QStringLiteral("Font"), this);
     m_fontLabel->setContentsMargins(8, 0, 2, 0);
-    m_fontLabelAction = propertiesToolbar->addWidget(m_fontLabel);
+    m_fontLabelAction = m_propertiesToolbar->addWidget(m_fontLabel);
 
     m_fontFamilyComboBox = new QComboBox(this);
     m_fontFamilyComboBox->addItems({QStringLiteral("Segoe UI"), QStringLiteral("Noto Sans"), QStringLiteral("DejaVu Sans"), QStringLiteral("Liberation Sans"), QStringLiteral("Arial")});
     m_fontFamilyComboBox->setCurrentText(QStringLiteral("Noto Sans"));
     m_fontFamilyComboBox->setFixedWidth(180);
-    m_fontFamilyAction = propertiesToolbar->addWidget(m_fontFamilyComboBox);
+    m_fontFamilyAction = m_propertiesToolbar->addWidget(m_fontFamilyComboBox);
     QObject::connect(m_fontFamilyComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setFontFamilyPreset);
 
     m_fontSizeComboBox = new QComboBox(this);
     m_fontSizeComboBox->addItems({QStringLiteral("10 pt"), QStringLiteral("12 pt"), QStringLiteral("14 pt"), QStringLiteral("18 pt")});
     m_fontSizeComboBox->setCurrentText(QStringLiteral("14 pt"));
     m_fontSizeComboBox->setFixedWidth(76);
-    m_fontSizeAction = propertiesToolbar->addWidget(m_fontSizeComboBox);
+    m_fontSizeAction = m_propertiesToolbar->addWidget(m_fontSizeComboBox);
     QObject::connect(m_fontSizeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setFontSizePreset);
+
+    m_emojiButton = new QToolButton(this);
+    m_emojiButton->setToolTip(QStringLiteral("Choose emoji"));
+    m_emojiButton->setAutoRaise(false);
+    QObject::connect(m_emojiButton, &QToolButton::clicked, this, &MainWindow::selectEmojiFromToolbar);
+    m_emojiAction = m_propertiesToolbar->addWidget(m_emojiButton);
+
+    m_emojiLineEdit = new QLineEdit(this);
+    m_emojiLineEdit->setPlaceholderText(QStringLiteral("Emoji"));
+    m_emojiLineEdit->setMaxLength(16);
+    m_emojiLineEdit->setFixedWidth(72);
+    QObject::connect(m_emojiLineEdit, &QLineEdit::editingFinished, this, &MainWindow::emojiTextEditingFinished);
+    m_emojiTextAction = m_propertiesToolbar->addWidget(m_emojiLineEdit);
 
     m_horizontalAlignmentButton = new QToolButton(this);
     m_horizontalAlignmentButton->setPopupMode(QToolButton::InstantPopup);
@@ -358,7 +427,7 @@ void MainWindow::createToolBars() {
     QAction* alignRightAction = horizontalAlignmentMenu->addAction(QIcon(QStringLiteral(":/win/fugue/edit-alignment-right.png")), QStringLiteral("Align Right"), this, &MainWindow::selectHorizontalAlignmentAction);
     alignRightAction->setData(static_cast<int>(Qt::AlignRight));
     m_horizontalAlignmentButton->setMenu(horizontalAlignmentMenu);
-    m_horizontalAlignmentAction = propertiesToolbar->addWidget(m_horizontalAlignmentButton);
+    m_horizontalAlignmentAction = m_propertiesToolbar->addWidget(m_horizontalAlignmentButton);
 
     m_verticalAlignmentButton = new QToolButton(this);
     m_verticalAlignmentButton->setPopupMode(QToolButton::InstantPopup);
@@ -371,92 +440,97 @@ void MainWindow::createToolBars() {
     QAction* alignBottomAction = verticalAlignmentMenu->addAction(QIcon(QStringLiteral(":/win/fugue/edit-vertical-alignment.png")), QStringLiteral("Align Bottom"), this, &MainWindow::selectVerticalAlignmentAction);
     alignBottomAction->setData(static_cast<int>(Qt::AlignBottom));
     m_verticalAlignmentButton->setMenu(verticalAlignmentMenu);
-    m_verticalAlignmentAction = propertiesToolbar->addWidget(m_verticalAlignmentButton);
+    m_verticalAlignmentAction = m_propertiesToolbar->addWidget(m_verticalAlignmentButton);
 
     m_arrowHeadLabel = new QLabel(QStringLiteral("Arrow"), this);
     m_arrowHeadLabel->setContentsMargins(8, 0, 2, 0);
-    m_arrowHeadLabelAction = propertiesToolbar->addWidget(m_arrowHeadLabel);
+    m_arrowHeadLabelAction = m_propertiesToolbar->addWidget(m_arrowHeadLabel);
     m_arrowHeadComboBox = new QComboBox(this);
     m_arrowHeadComboBox->addItems({QStringLiteral("End"), QStringLiteral("Start"), QStringLiteral("Both"), QStringLiteral("None")});
     m_arrowHeadComboBox->setCurrentIndex(0);
     m_arrowHeadComboBox->setFixedWidth(88);
-    m_arrowHeadAction = propertiesToolbar->addWidget(m_arrowHeadComboBox);
+    m_arrowHeadAction = m_propertiesToolbar->addWidget(m_arrowHeadComboBox);
     QObject::connect(m_arrowHeadComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setArrowHeadPreset);
 
     m_pixelSizeLabel = new QLabel(QStringLiteral("Pixel"), this);
     m_pixelSizeLabel->setContentsMargins(8, 0, 2, 0);
-    m_pixelSizeLabelAction = propertiesToolbar->addWidget(m_pixelSizeLabel);
+    m_pixelSizeLabelAction = m_propertiesToolbar->addWidget(m_pixelSizeLabel);
     m_pixelSizeComboBox = new QComboBox(this);
     m_pixelSizeComboBox->addItems({QStringLiteral("4 px"), QStringLiteral("8 px"), QStringLiteral("12 px"), QStringLiteral("16 px"), QStringLiteral("24 px")});
     m_pixelSizeComboBox->setCurrentText(QStringLiteral("12 px"));
     m_pixelSizeComboBox->setFixedWidth(88);
-    m_pixelSizeAction = propertiesToolbar->addWidget(m_pixelSizeComboBox);
+    m_pixelSizeAction = m_propertiesToolbar->addWidget(m_pixelSizeComboBox);
     QObject::connect(m_pixelSizeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setPixelSizePreset);
 
     m_blurRadiusLabel = new QLabel(QStringLiteral("Blur"), this);
     m_blurRadiusLabel->setContentsMargins(8, 0, 2, 0);
-    m_blurRadiusLabelAction = propertiesToolbar->addWidget(m_blurRadiusLabel);
+    m_blurRadiusLabelAction = m_propertiesToolbar->addWidget(m_blurRadiusLabel);
     m_blurRadiusComboBox = new QComboBox(this);
     m_blurRadiusComboBox->addItems({QStringLiteral("4 px"), QStringLiteral("8 px"), QStringLiteral("12 px"), QStringLiteral("16 px"), QStringLiteral("24 px")});
     m_blurRadiusComboBox->setCurrentText(QStringLiteral("12 px"));
     m_blurRadiusComboBox->setFixedWidth(88);
-    m_blurRadiusAction = propertiesToolbar->addWidget(m_blurRadiusComboBox);
+    m_blurRadiusAction = m_propertiesToolbar->addWidget(m_blurRadiusComboBox);
     QObject::connect(m_blurRadiusComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setBlurRadiusPreset);
 
     m_magnificationFactorLabel = new QLabel(QStringLiteral("Magnify"), this);
     m_magnificationFactorLabel->setContentsMargins(8, 0, 2, 0);
-    m_magnificationFactorLabelAction = propertiesToolbar->addWidget(m_magnificationFactorLabel);
+    m_magnificationFactorLabelAction = m_propertiesToolbar->addWidget(m_magnificationFactorLabel);
     m_magnificationFactorComboBox = new QComboBox(this);
     m_magnificationFactorComboBox->addItems({QStringLiteral("2x"), QStringLiteral("3x"), QStringLiteral("4x")});
     m_magnificationFactorComboBox->setCurrentText(QStringLiteral("2x"));
     m_magnificationFactorComboBox->setFixedWidth(72);
-    m_magnificationFactorAction = propertiesToolbar->addWidget(m_magnificationFactorComboBox);
+    m_magnificationFactorAction = m_propertiesToolbar->addWidget(m_magnificationFactorComboBox);
     QObject::connect(m_magnificationFactorComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setMagnificationFactorPreset);
 
     m_counterLabel = new QLabel(QStringLiteral("Counter"), this);
     m_counterLabel->setContentsMargins(8, 0, 2, 0);
-    m_counterLabelAction = propertiesToolbar->addWidget(m_counterLabel);
+    m_counterLabelAction = m_propertiesToolbar->addWidget(m_counterLabel);
     m_counterSpinBox = new QSpinBox(this);
     m_counterSpinBox->setRange(0, 999);
     m_counterSpinBox->setValue(1);
     m_counterSpinBox->setFixedWidth(68);
-    m_counterAction = propertiesToolbar->addWidget(m_counterSpinBox);
+    m_counterAction = m_propertiesToolbar->addWidget(m_counterSpinBox);
     QObject::connect(m_counterSpinBox, QOverload<int>::of(&QSpinBox::valueChanged), this, &MainWindow::setCounterStartValue);
 
     m_cropModeLabel = new QLabel(QStringLiteral("Crop"), this);
     m_cropModeLabel->setContentsMargins(8, 0, 2, 0);
-    m_cropModeLabelAction = propertiesToolbar->addWidget(m_cropModeLabel);
+    m_cropModeLabelAction = m_propertiesToolbar->addWidget(m_cropModeLabel);
     m_cropModeComboBox = new QComboBox(this);
     m_cropModeComboBox->addItems({QStringLiteral("Default"), QStringLiteral("Vertical"), QStringLiteral("Horizontal"), QStringLiteral("Auto")});
     m_cropModeComboBox->setFixedWidth(100);
-    m_cropModeAction = propertiesToolbar->addWidget(m_cropModeComboBox);
+    m_cropModeAction = m_propertiesToolbar->addWidget(m_cropModeComboBox);
     QObject::connect(m_cropModeComboBox, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::setCropModePreset);
 
-    m_boldAction = propertiesToolbar->addAction(QIcon(QStringLiteral(":/win/text_bold.png")), QStringLiteral("Bold"));
+    m_boldAction = m_propertiesToolbar->addAction(QIcon(QStringLiteral(":/win/text_bold.png")), QStringLiteral("Bold"));
     m_boldAction->setCheckable(true);
-    m_italicAction = propertiesToolbar->addAction(QIcon(QStringLiteral(":/win/text_italic.png")), QStringLiteral("Italic"));
+    m_italicAction = m_propertiesToolbar->addAction(QIcon(QStringLiteral(":/win/text_italic.png")), QStringLiteral("Italic"));
     m_italicAction->setCheckable(true);
-    m_shadowAction = propertiesToolbar->addAction(QIcon(QStringLiteral(":/win/shadow.png")), QStringLiteral("Shadow"));
+    m_shadowAction = m_propertiesToolbar->addAction(QIcon(QStringLiteral(":/win/shadow.png")), QStringLiteral("Shadow"));
     m_shadowAction->setCheckable(true);
     QObject::connect(m_boldAction, &QAction::toggled, this, &MainWindow::setBoldText);
     QObject::connect(m_italicAction, &QAction::toggled, this, &MainWindow::setItalicText);
     QObject::connect(m_shadowAction, &QAction::toggled, this, &MainWindow::setShadowEnabled);
 
-    m_confirmAction = propertiesToolbar->addAction(QStringLiteral("Confirm"));
+    m_confirmAction = m_propertiesToolbar->addAction(QStringLiteral("Confirm"));
     QObject::connect(m_confirmAction, &QAction::triggered, this, &MainWindow::confirmPendingAction);
-    m_cancelAction = propertiesToolbar->addAction(QStringLiteral("Cancel"));
+    m_cancelAction = m_propertiesToolbar->addAction(QStringLiteral("Cancel"));
     QObject::connect(m_cancelAction, &QAction::triggered, this, &MainWindow::cancelPendingAction);
+
+    m_propertiesToolbar->setMinimumHeight(m_propertiesToolbar->sizeHint().height());
+    updateEmojiButton();
 
     QToolBar* toolsToolbar = new QToolBar(QStringLiteral("Tools"), this);
     toolsToolbar->setMovable(false);
     toolsToolbar->setOrientation(Qt::Vertical);
     toolsToolbar->setIconSize(QSize(16, 16));
     toolsToolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    toolsToolbar->setContentsMargins(0, 0, 0, 0);
     addToolBar(Qt::LeftToolBarArea, toolsToolbar);
 
     QActionGroup* toolGroup = new QActionGroup(this);
     toolGroup->setExclusive(true);
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/fugue/cursor.png"), QStringLiteral("Cursor"), true);
+    toolsToolbar->addSeparator();
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/shape_square_add.png"), QStringLiteral("Rectangle"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/shape_ellipse_add.png"), QStringLiteral("Ellipse"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/shape_line.png"), QStringLiteral("Line"));
@@ -467,11 +541,13 @@ void MainWindow::createToolBars() {
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/editor/balloon.png"), QStringLiteral("Speech bubble"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/editor/notification-counter-01.png"), QStringLiteral("Step label"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/heart.png"), QStringLiteral("Emoji"));
+    toolsToolbar->addSeparator();
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/fugue/filter_highlight_area.png"), QStringLiteral("Highlight"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/fugue/edit-pixelate.png"), QStringLiteral("Obfuscate"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/fugue/edit-blur.png"), QStringLiteral("Blur"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/fugue/filter_highlight_grayscale.png"), QStringLiteral("Grayscale"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/fugue/magnifier.png"), QStringLiteral("Magnify"));
+    toolsToolbar->addSeparator();
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/editor/resize.png"), QStringLiteral("Resize"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/ruler-crop.png"), QStringLiteral("Crop"));
     addToolAction(toolGroup, toolsToolbar, QStringLiteral(":/win/layer-rotate.png"), QStringLiteral("Rotate clockwise"));
@@ -481,16 +557,44 @@ void MainWindow::createToolBars() {
 void MainWindow::createCentralLayout() {
     QWidget* central = new QWidget(this);
     QGridLayout* layout = new QGridLayout(central);
-    layout->setContentsMargins(18, 18, 18, 18);
+    layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(0);
 
-    m_scrollArea = new QScrollArea(central);
+    QFrame* workspaceFrame = new QFrame(central);
+    workspaceFrame->setObjectName(QStringLiteral("workspaceFrame"));
+    workspaceFrame->setStyleSheet(QStringLiteral(
+        "QFrame#workspaceFrame{"
+        "background:#dddddd;"
+        "border-top:1px solid #b7b7b7;"
+        "border-left:1px solid #b7b7b7;"
+        "border-right:1px solid #fdfdfd;"
+        "border-bottom:1px solid #fdfdfd;"
+        "}"
+    ));
+    auto* workspaceLayout = new QVBoxLayout(workspaceFrame);
+    workspaceLayout->setContentsMargins(1, 1, 1, 1);
+    workspaceLayout->setSpacing(0);
+
+    m_scrollArea = new QScrollArea(workspaceFrame);
     m_scrollArea->setWidgetResizable(false);
     m_scrollArea->setAlignment(Qt::AlignCenter);
     m_scrollArea->setFrameShape(QFrame::NoFrame);
     m_scrollArea->setStyleSheet(QStringLiteral("background:#e4e4e4;"));
 
-    m_canvasWidget = new CanvasWidget(m_scrollArea);
+    m_canvasWorkspace = new QWidget(m_scrollArea);
+    auto* canvasWrapperLayout = new QVBoxLayout(m_canvasWorkspace);
+    canvasWrapperLayout->setContentsMargins(24, 24, 24, 24);
+    canvasWrapperLayout->setSpacing(0);
+
+    QFrame* canvasContainer = new QFrame(m_canvasWorkspace);
+    canvasContainer->setObjectName(QStringLiteral("canvasContainer"));
+    canvasContainer->setStyleSheet(QStringLiteral("QFrame#canvasContainer{background:transparent;border:none;}"));
+
+    auto* canvasContainerLayout = new QVBoxLayout(canvasContainer);
+    canvasContainerLayout->setContentsMargins(0, 0, 0, 0);
+    canvasContainerLayout->setSpacing(0);
+
+    m_canvasWidget = new CanvasWidget(canvasContainer);
     QObject::connect(m_canvasWidget, &CanvasWidget::statusMessageChanged, this, &MainWindow::setStatusMessage);
     QObject::connect(m_canvasWidget, &CanvasWidget::undoAvailableChanged, this, &MainWindow::updateUndoAvailability);
     QObject::connect(m_canvasWidget, &CanvasWidget::redoAvailableChanged, this, &MainWindow::updateRedoAvailability);
@@ -504,9 +608,13 @@ void MainWindow::createCentralLayout() {
     QObject::connect(m_canvasWidget, &CanvasWidget::modifiedChanged, this, &MainWindow::updateModifiedState);
     m_canvasWidget->setStrokeWidth(3);
     m_canvasWidget->setTextFont(QFont(QStringLiteral("Noto Sans"), 14));
-    m_scrollArea->setWidget(m_canvasWidget);
+    canvasContainerLayout->addWidget(m_canvasWidget);
+    canvasWrapperLayout->addWidget(canvasContainer, 0, Qt::AlignCenter);
+    m_scrollArea->setWidget(m_canvasWorkspace);
+    workspaceLayout->addWidget(m_scrollArea);
+    syncCanvasWorkspaceSize();
     refreshPropertyVisibility(QStringLiteral("Cursor"));
-    layout->addWidget(m_scrollArea, 0, 0);
+    layout->addWidget(workspaceFrame, 0, 0);
     setCentralWidget(central);
 }
 
@@ -954,7 +1062,7 @@ void MainWindow::chooseFillColor() {
     if (m_canvasWidget == nullptr) {
         return;
     }
-    const QColor color = QColorDialog::getColor(m_canvasWidget->currentFillColor(), this, QStringLiteral("Select fill color"));
+    const QColor color = chooseColor(this, m_canvasWidget->currentFillColor(), QStringLiteral("Select fill color"));
     if (!color.isValid()) {
         return;
     }
@@ -966,12 +1074,42 @@ void MainWindow::chooseLineColor() {
     if (m_canvasWidget == nullptr) {
         return;
     }
-    const QColor color = QColorDialog::getColor(m_canvasWidget->currentStrokeColor(), this, QStringLiteral("Select line color"));
+    const QColor color = chooseColor(this, m_canvasWidget->currentStrokeColor(), QStringLiteral("Select line color"));
     if (!color.isValid()) {
         return;
     }
     m_canvasWidget->setStrokeColor(color);
     updateColorButton(m_lineColorButton, color, QStringLiteral(":/win/fugue/pencil-color.png"));
+}
+
+void MainWindow::selectEmojiFromToolbar() {
+    if (m_canvasWidget == nullptr) {
+        return;
+    }
+
+    const QString emoji = chooseEmoji(m_canvasWidget->currentEmojiText());
+    if (emoji.isEmpty()) {
+        return;
+    }
+
+    m_canvasWidget->setEmojiText(emoji);
+    syncPropertyControlsFromCanvas();
+}
+
+void MainWindow::emojiTextEditingFinished() {
+    if (m_syncingPropertyControls || m_canvasWidget == nullptr || m_emojiLineEdit == nullptr) {
+        return;
+    }
+
+    const QString emoji = normalizeSingleGrapheme(m_emojiLineEdit->text());
+    if (emoji.isEmpty()) {
+        m_emojiLineEdit->setText(m_canvasWidget->currentEmojiText());
+        setStatusMessage(QStringLiteral("Emoji must be a single grapheme."));
+        return;
+    }
+
+    m_canvasWidget->setEmojiText(emoji);
+    syncPropertyControlsFromCanvas();
 }
 
 void MainWindow::triggerUndo() {
@@ -1053,7 +1191,7 @@ void MainWindow::applyTornEdgesEffect() {
 void MainWindow::showAboutDialog() {
     QMessageBox::about(this,
         QStringLiteral("About Blueshot Editor"),
-        QStringLiteral("Blueshot Editor for Linux<br><br><a href=\"https://huma.id/blueshot\">https://huma.id/blueshot</a>"));
+        QStringLiteral("Blueshot Editor<br><br><a href=\"https://huma.id/blueshot\">https://huma.id/blueshot</a>"));
 }
 
 void MainWindow::updateUndoAvailability(bool available) {
@@ -1078,6 +1216,7 @@ void MainWindow::updateDocumentSize(const QSize& size) {
     if (m_dimensionsLabel != nullptr) {
         m_dimensionsLabel->setText(QStringLiteral("%1 x %2px").arg(size.width()).arg(size.height()));
     }
+    syncCanvasWorkspaceSize();
 }
 
 void MainWindow::updateModifiedState(bool modified) {
@@ -1120,10 +1259,27 @@ void MainWindow::setZoomFactor(double zoomFactor) {
     if (m_canvasWidget != nullptr) {
         m_canvasWidget->setZoomFactor(zoomFactor);
     }
+    syncCanvasWorkspaceSize();
+}
+
+void MainWindow::syncCanvasWorkspaceSize() {
+    if (m_canvasWorkspace == nullptr || m_canvasWidget == nullptr) {
+        return;
+    }
+
+    const QMargins margins = m_canvasWorkspace->layout() != nullptr
+        ? m_canvasWorkspace->layout()->contentsMargins()
+        : QMargins();
+    const QSize canvasSize = m_canvasWidget->size();
+    const QSize workspaceSize(
+        canvasSize.width() + margins.left() + margins.right(),
+        canvasSize.height() + margins.top() + margins.bottom());
+    m_canvasWorkspace->setFixedSize(workspaceSize);
 }
 
 void MainWindow::refreshPropertyVisibility(const QString& context) {
     const bool textLike = context == QStringLiteral("Text") || context == QStringLiteral("Text Highlight") || context == QStringLiteral("Speech bubble") || context == QStringLiteral("Step label") || context == QStringLiteral("Emoji");
+    const bool emojiLike = context == QStringLiteral("Emoji");
     const bool fillLike = context == QStringLiteral("Rectangle") || context == QStringLiteral("Ellipse") || context == QStringLiteral("Speech bubble") || context == QStringLiteral("Step label") || context == QStringLiteral("Highlight");
     const bool strokeLike = fillLike || context == QStringLiteral("Line") || context == QStringLiteral("Arrow") || context == QStringLiteral("Freehand") || context == QStringLiteral("Text") || context == QStringLiteral("Text Highlight");
     const bool arrowLike = context == QStringLiteral("Arrow");
@@ -1133,6 +1289,7 @@ void MainWindow::refreshPropertyVisibility(const QString& context) {
     const bool magnifyLike = context == QStringLiteral("Magnify");
     const bool cropLike = context == QStringLiteral("Crop") || context == QStringLiteral("CropPending");
     const bool confirmable = context == QStringLiteral("CropPending");
+    const bool shadowLike = textLike || context == QStringLiteral("Rectangle") || context == QStringLiteral("Ellipse") || context == QStringLiteral("Line") || context == QStringLiteral("Arrow");
 
     if (m_fillColorAction != nullptr) m_fillColorAction->setVisible(fillLike);
     if (m_lineColorAction != nullptr) m_lineColorAction->setVisible(strokeLike);
@@ -1140,6 +1297,8 @@ void MainWindow::refreshPropertyVisibility(const QString& context) {
     if (m_fontLabelAction != nullptr) m_fontLabelAction->setVisible(textLike);
     if (m_fontFamilyAction != nullptr) m_fontFamilyAction->setVisible(textLike);
     if (m_fontSizeAction != nullptr) m_fontSizeAction->setVisible(textLike);
+    if (m_emojiAction != nullptr) m_emojiAction->setVisible(emojiLike);
+    if (m_emojiTextAction != nullptr) m_emojiTextAction->setVisible(emojiLike);
     if (m_horizontalAlignmentAction != nullptr) m_horizontalAlignmentAction->setVisible(textLike);
     if (m_verticalAlignmentAction != nullptr) m_verticalAlignmentAction->setVisible(textLike);
     if (m_arrowHeadLabelAction != nullptr) m_arrowHeadLabelAction->setVisible(arrowLike);
@@ -1156,7 +1315,7 @@ void MainWindow::refreshPropertyVisibility(const QString& context) {
     if (m_cropModeAction != nullptr) m_cropModeAction->setVisible(cropLike);
     if (m_boldAction != nullptr) m_boldAction->setVisible(textLike);
     if (m_italicAction != nullptr) m_italicAction->setVisible(textLike);
-    if (m_shadowAction != nullptr) m_shadowAction->setVisible(textLike);
+    if (m_shadowAction != nullptr) m_shadowAction->setVisible(shadowLike);
     if (m_confirmAction != nullptr) m_confirmAction->setVisible(confirmable);
     if (m_cancelAction != nullptr) m_cancelAction->setVisible(confirmable);
 
@@ -1169,7 +1328,19 @@ void MainWindow::updateColorButton(QToolButton* button, const QColor& color, con
     }
     button->setIcon(createTintedToolbarIcon(iconPath, color));
     button->setIconSize(QSize(16, 16));
-    button->setStyleSheet(QStringLiteral("QToolButton{background:#f6f6f6;border:1px solid #c9c9c9;padding:4px;margin:1px;}QToolButton:hover{background:#ededed;}"));
+    button->setStyleSheet(QStringLiteral("QToolButton{background:transparent;border:1px solid transparent;padding:4px;margin:0px;}QToolButton:hover{background:#ededed;}QToolButton:checked{background:#dcebfb;border:1px solid #6da6e2;}"));
+}
+
+void MainWindow::updateEmojiButton() {
+    if (m_emojiButton == nullptr || m_canvasWidget == nullptr) {
+        return;
+    }
+
+    const QString emoji = m_canvasWidget->currentEmojiText();
+    m_emojiButton->setText(emoji);
+    m_emojiButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_emojiButton->setMinimumWidth(36);
+    m_emojiButton->setStyleSheet(QStringLiteral("QToolButton{background:transparent;border:1px solid transparent;padding:4px 8px;margin:0px;font-size:16px;}QToolButton:hover{background:#ededed;}QToolButton:checked{background:#dcebfb;border:1px solid #6da6e2;}"));
 }
 
 void MainWindow::updateAlignmentButtons() {
@@ -1216,6 +1387,7 @@ void MainWindow::syncPropertyControlsFromCanvas() {
     }
 
     const QFont font = m_canvasWidget->currentTextFont();
+    const QString emoji = m_canvasWidget->currentEmojiText();
     if (m_fontFamilyComboBox != nullptr) {
         const int fontIndex = m_fontFamilyComboBox->findText(font.family());
         if (fontIndex >= 0) {
@@ -1225,6 +1397,10 @@ void MainWindow::syncPropertyControlsFromCanvas() {
     if (m_fontSizeComboBox != nullptr) {
         m_fontSizeComboBox->setCurrentText(QStringLiteral("%1 pt").arg(qRound(font.pointSizeF())));
     }
+    if (m_emojiLineEdit != nullptr) {
+        m_emojiLineEdit->setText(emoji);
+    }
+    updateEmojiButton();
     if (m_boldAction != nullptr) {
         m_boldAction->setChecked(font.bold());
     }
@@ -1257,6 +1433,103 @@ void MainWindow::syncPropertyControlsFromCanvas() {
     }
 
     m_syncingPropertyControls = false;
+}
+
+QString MainWindow::chooseEmoji(const QString& initialEmoji) {
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("Choose Emoji"));
+    dialog.setModal(true);
+
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* promptLabel = new QLabel(QStringLiteral("Pick an emoji or enter a single grapheme."), &dialog);
+    layout->addWidget(promptLabel);
+
+    auto* gridLayout = new QGridLayout();
+    const QStringList emojiOptions = {
+        QStringLiteral("😀"), QStringLiteral("😂"), QStringLiteral("😍"), QStringLiteral("🤔"), QStringLiteral("👍"), QStringLiteral("👎"),
+        QStringLiteral("✅"), QStringLiteral("❌"), QStringLiteral("⚠️"), QStringLiteral("🚀"), QStringLiteral("🔥"), QStringLiteral("🎉"),
+        QStringLiteral("📌"), QStringLiteral("⭐"), QStringLiteral("❤️"), QStringLiteral("👀"), QStringLiteral("😅"), QStringLiteral("🙌")
+    };
+
+    auto* customEmojiEdit = new QLineEdit(&dialog);
+    customEmojiEdit->setPlaceholderText(QStringLiteral("Single emoji"));
+    customEmojiEdit->setText(initialEmoji);
+
+    for (int index = 0; index < emojiOptions.size(); ++index) {
+        auto* button = new QPushButton(emojiOptions.at(index), &dialog);
+        button->setMinimumSize(36, 36);
+        QObject::connect(button, &QPushButton::clicked, &dialog, [customEmojiEdit, button, &dialog]() {
+            customEmojiEdit->setText(button->text());
+            dialog.accept();
+        });
+        gridLayout->addWidget(button, index / 6, index % 6);
+    }
+    layout->addLayout(gridLayout);
+
+    auto* customRow = new QHBoxLayout();
+    auto* nativeButton = new QPushButton(QStringLiteral("Native"), &dialog);
+    QObject::connect(nativeButton, &QPushButton::clicked, &dialog, [this, customEmojiEdit]() {
+        if (!tryOpenNativeEmojiPicker(customEmojiEdit)) {
+            setStatusMessage(QStringLiteral("Native emoji picker is not available here."));
+        }
+    });
+    customRow->addWidget(customEmojiEdit, 1);
+    customRow->addWidget(nativeButton);
+    layout->addLayout(customRow);
+
+    auto* validationLabel = new QLabel(&dialog);
+    validationLabel->setStyleSheet(QStringLiteral("color:#a1260d;"));
+    layout->addWidget(validationLabel);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    layout->addWidget(buttons);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    auto validate = [customEmojiEdit, validationLabel, buttons]() {
+        const QString normalized = normalizeSingleGrapheme(customEmojiEdit->text());
+        const bool valid = !normalized.isEmpty();
+        buttons->button(QDialogButtonBox::Ok)->setEnabled(valid);
+        validationLabel->setText(valid ? QString() : QStringLiteral("Enter exactly one emoji or grapheme."));
+    };
+
+    QObject::connect(customEmojiEdit, &QLineEdit::textChanged, &dialog, [validate]() { validate(); });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&dialog, customEmojiEdit]() {
+        if (normalizeSingleGrapheme(customEmojiEdit->text()).isEmpty()) {
+            return;
+        }
+        dialog.accept();
+    });
+
+    validate();
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return {};
+    }
+
+    return normalizeSingleGrapheme(customEmojiEdit->text());
+}
+
+bool MainWindow::tryOpenNativeEmojiPicker(QWidget* targetWidget) {
+    if (targetWidget == nullptr) {
+        return false;
+    }
+
+    targetWidget->setFocus(Qt::OtherFocusReason);
+#ifdef Q_OS_MACOS
+    return QProcess::startDetached(QStringLiteral("osascript"), {
+        QStringLiteral("-e"),
+        QStringLiteral("tell application \"System Events\" to key code 49 using {control down, command down}")
+    });
+#elif defined(Q_OS_WIN)
+    return QProcess::startDetached(QStringLiteral("powershell"), {
+        QStringLiteral("-NoProfile"),
+        QStringLiteral("-Command"),
+        QStringLiteral("Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait('^{.}')")
+    });
+#else
+    Q_UNUSED(targetWidget);
+    return false;
+#endif
 }
 
 bool MainWindow::confirmCloseWithUnsavedChanges() {

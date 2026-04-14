@@ -1,15 +1,18 @@
 #pragma once
 
-#include <QtCore/QRectF>
-#include <QtCore/QSize>
-#include <QtCore/QSet>
-#include <QtCore/QHash>
-#include <QtCore/QString>
-#include <QtCore/QVector>
-#include <QtGui/QFont>
-#include <QtGui/QColor>
-#include <QtGui/QImage>
-#include <QtWidgets/QWidget>
+#include <QColor>
+#include <QFont>
+#include <QHash>
+#include <QImage>
+#include <QRectF>
+#include <QSet>
+#include <QSize>
+#include <QString>
+#include <QVector>
+#include <QWidget>
+
+class QTextEdit;
+class QPainterPath;
 
 class CanvasWidget : public QWidget {
     Q_OBJECT
@@ -66,6 +69,7 @@ public:
     void setFillColor(const QColor& color);
     void setStrokeWidth(int width);
     void setTextFont(const QFont& font);
+    void setEmojiText(const QString& emojiText);
     void setTextHorizontalAlignment(Qt::Alignment alignment);
     void setTextVerticalAlignment(Qt::Alignment alignment);
     void setArrowHeadMode(ArrowHeadMode mode);
@@ -95,6 +99,7 @@ public:
     [[nodiscard]] QColor currentFillColor() const;
     [[nodiscard]] int currentStrokeWidth() const;
     [[nodiscard]] QFont currentTextFont() const;
+    [[nodiscard]] QString currentEmojiText() const;
     [[nodiscard]] Qt::Alignment currentTextHorizontalAlignment() const;
     [[nodiscard]] Qt::Alignment currentTextVerticalAlignment() const;
     [[nodiscard]] ArrowHeadMode currentArrowHeadMode() const;
@@ -139,12 +144,14 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void wheelEvent(QWheelEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private:
     struct Annotation {
         AnnotationType type = AnnotationType::Rectangle;
         QPointF start;
         QPointF end;
+        QPointF tail;
         QColor strokeColor;
         QColor fillColor;
         int strokeWidth = 1;
@@ -183,6 +190,7 @@ private:
         int blurRadius = 12;
         int magnificationFactor = 2;
         bool shadowEnabled = false;
+        QString emoji = QStringLiteral("😀");
     };
 
     enum class ResizeHandle {
@@ -191,6 +199,7 @@ private:
         TopRight,
         BottomLeft,
         BottomRight,
+        SpeechBubbleTail,
         LineStart,
         LineEnd,
     };
@@ -200,6 +209,10 @@ private:
     [[nodiscard]] QRectF normalizedClampedRect(const QPointF& start, const QPointF& end) const;
     [[nodiscard]] QRectF textLayoutRect(const Annotation& annotation) const;
     [[nodiscard]] QRectF annotationBounds(const Annotation& annotation) const;
+    [[nodiscard]] QRectF inlineEditorRect(const Annotation& annotation) const;
+    [[nodiscard]] QPointF defaultSpeechBubbleTail(const Annotation& annotation) const;
+    [[nodiscard]] QPainterPath speechBubblePath(const Annotation& annotation) const;
+    void updateSpeechBubbleGeometry(Annotation& annotation, const QPointF& anchorPoint, const QPointF& dragPoint) const;
     [[nodiscard]] ResizeHandle hitTestResizeHandle(const QPointF& imagePoint) const;
     [[nodiscard]] QRectF cropRect() const;
     [[nodiscard]] QRectF effectiveCropRect() const;
@@ -210,6 +223,8 @@ private:
     [[nodiscard]] bool hasSelection() const;
     [[nodiscard]] bool isSelected(int index) const;
     [[nodiscard]] bool isTextLike(const Annotation& annotation) const;
+    [[nodiscard]] bool supportsInlineTextEditing(AnnotationType type) const;
+    [[nodiscard]] bool hasActiveInlineTextEdit() const;
     [[nodiscard]] bool isAutoCropMode() const;
     [[nodiscard]] QString editingContext() const;
     [[nodiscard]] QString stepLabelText(const Annotation& annotation) const;
@@ -242,6 +257,15 @@ private:
     void applyVerticalCrop(const QRectF& cropRect);
     void pushUndoState();
     void commitAnnotation(const Annotation& annotation);
+    void ensureInlineTextEditor();
+    void applyInlineTextEditorStyle(const Annotation& annotation);
+    void updateInlineTextEditorGeometry();
+    void refreshInlineTextEdit();
+    void beginInlineTextCreation(const Annotation& annotation, const QString& statusMessage);
+    void beginInlineTextEditing(int index);
+    void finishInlineTextEdit(bool commitChanges);
+    void commitInlineTextEdit();
+    void cancelInlineTextEdit();
     void updateUndoRedoState();
     [[nodiscard]] QImage renderObfuscationMask(const Annotation* previewAnnotation = nullptr) const;
     void drawAnnotation(QPainter& painter, const Annotation& annotation, double scale, const QImage* composedImage = nullptr, const QImage* obfuscationSourceImage = nullptr, const QImage* obfuscationMaskImage = nullptr) const;
@@ -260,6 +284,7 @@ private:
     QColor m_fillColor = QColor(QStringLiteral("#fff2cc"));
     int m_strokeWidth = 3;
     QFont m_textFont = QFont(QStringLiteral("Noto Sans"), 14);
+    QString m_emojiText = QStringLiteral("😀");
     Qt::Alignment m_textHorizontalAlignment = Qt::AlignLeft;
     Qt::Alignment m_textVerticalAlignment = Qt::AlignTop;
     ArrowHeadMode m_arrowHeadMode = ArrowHeadMode::End;
@@ -288,4 +313,10 @@ private:
     QPointF m_lastPointerImagePoint;
     Annotation m_previewAnnotation;
     QRectF m_pendingCropRect;
+    QTextEdit* m_inlineTextEditor = nullptr;
+    Annotation m_inlineEditAnnotation;
+    QString m_inlineEditStatusMessage;
+    int m_inlineEditIndex = -1;
+    bool m_inlineEditIsNew = false;
+    bool m_inlineEditClosing = false;
 };

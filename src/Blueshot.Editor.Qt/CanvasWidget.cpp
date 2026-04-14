@@ -1,26 +1,27 @@
 #include "CanvasWidget.h"
 
-#include <QtCore/QSize>
-#include <QtCore/QSizeF>
-#include <QtCore/QJsonArray>
-#include <QtCore/QJsonDocument>
-#include <QtCore/QJsonObject>
-#include <QtGui/QFontMetricsF>
-#include <QtGui/QKeyEvent>
-#include <QtGui/QMouseEvent>
-#include <QtGui/QPaintEvent>
-#include <QtGui/QPainter>
-#include <QtGui/QPainterPath>
-#include <QtGui/QPen>
-#include <QtGui/QPixmap>
-#include <QtGui/QTransform>
-#include <QtGui/QWheelEvent>
-#include <QtGui/QClipboard>
-#include <QtCore/QRandomGenerator>
-#include <QtCore/QtMath>
-#include <QtCore/QMimeData>
-#include <QtGui/QGuiApplication>
-#include <QtWidgets/QInputDialog>
+#include <QClipboard>
+#include <QFontMetricsF>
+#include <QGuiApplication>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QKeyEvent>
+#include <QMimeData>
+#include <QMouseEvent>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPainterPathStroker>
+#include <QPen>
+#include <QPixmap>
+#include <QRandomGenerator>
+#include <QSize>
+#include <QSizeF>
+#include <QTextEdit>
+#include <QTransform>
+#include <QWheelEvent>
+#include <QtMath>
 
 #include <algorithm>
 
@@ -44,6 +45,93 @@ QRectF normalizedRect(const QPointF& start, const QPointF& end) {
 
 QRectF scaledRect(const QRectF& rect, double scale) {
     return QRectF(rect.left() * scale, rect.top() * scale, rect.width() * scale, rect.height() * scale);
+}
+
+QPointF annotationShadowOffset() {
+    return QPointF(2.0, 2.0);
+}
+
+constexpr int kAnnotationShadowBlurRadius = 4;
+
+QPainterPath createStrokePath(const QPainterPath& path, qreal width) {
+    QPainterPathStroker stroker;
+    stroker.setWidth(qMax<qreal>(1.0, width));
+    stroker.setCapStyle(Qt::RoundCap);
+    stroker.setJoinStyle(Qt::RoundJoin);
+    return stroker.createStroke(path);
+}
+
+void drawBlurredShadowPath(QPainter& painter, const QPainterPath& path, const QColor& color) {
+    if (path.isEmpty() || color.alpha() <= 0) {
+        return;
+    }
+
+    painter.save();
+    painter.setPen(Qt::NoPen);
+    const QPointF offset = annotationShadowOffset();
+    for (int blurY = -kAnnotationShadowBlurRadius; blurY <= kAnnotationShadowBlurRadius; ++blurY) {
+        for (int blurX = -kAnnotationShadowBlurRadius; blurX <= kAnnotationShadowBlurRadius; ++blurX) {
+            const qreal distance = qSqrt((blurX * blurX) + (blurY * blurY));
+            if (distance > kAnnotationShadowBlurRadius) {
+                continue;
+            }
+
+            const qreal falloff = 1.0 - (distance / qMax(1, kAnnotationShadowBlurRadius));
+            QColor layer = color;
+            layer.setAlpha(qMax(1, qRound(color.alpha() * 0.14 * falloff)));
+            painter.setBrush(layer);
+            painter.drawPath(path.translated(offset + QPointF(blurX, blurY)));
+        }
+    }
+    painter.restore();
+}
+
+void drawBlurredTextShadow(QPainter& painter, const QRectF& rect, int flags, const QString& text, const QColor& color) {
+    if (text.isEmpty() || color.alpha() <= 0) {
+        return;
+    }
+
+    painter.save();
+    const QPointF offset = annotationShadowOffset();
+    for (int blurY = -kAnnotationShadowBlurRadius; blurY <= kAnnotationShadowBlurRadius; ++blurY) {
+        for (int blurX = -kAnnotationShadowBlurRadius; blurX <= kAnnotationShadowBlurRadius; ++blurX) {
+            const qreal distance = qSqrt((blurX * blurX) + (blurY * blurY));
+            if (distance > kAnnotationShadowBlurRadius) {
+                continue;
+            }
+
+            const qreal falloff = 1.0 - (distance / qMax(1, kAnnotationShadowBlurRadius));
+            QColor layer = color;
+            layer.setAlpha(qMax(1, qRound(color.alpha() * 0.12 * falloff)));
+            painter.setPen(layer);
+            painter.drawText(rect.translated(offset + QPointF(blurX, blurY)), flags, text);
+        }
+    }
+    painter.restore();
+}
+
+bool annotationTypeSupportsShadow(CanvasWidget::AnnotationType type) {
+    switch (type) {
+    case CanvasWidget::AnnotationType::Rectangle:
+    case CanvasWidget::AnnotationType::Ellipse:
+    case CanvasWidget::AnnotationType::Line:
+    case CanvasWidget::AnnotationType::Arrow:
+    case CanvasWidget::AnnotationType::Text:
+    case CanvasWidget::AnnotationType::Emoji:
+    case CanvasWidget::AnnotationType::TextHighlight:
+    case CanvasWidget::AnnotationType::SpeechBubble:
+    case CanvasWidget::AnnotationType::StepLabel:
+        return true;
+    case CanvasWidget::AnnotationType::Freehand:
+    case CanvasWidget::AnnotationType::Highlight:
+    case CanvasWidget::AnnotationType::Pixelate:
+    case CanvasWidget::AnnotationType::Blur:
+    case CanvasWidget::AnnotationType::Grayscale:
+    case CanvasWidget::AnnotationType::Magnify:
+        return false;
+    }
+
+    return false;
 }
 
 QColor averageImageColor(const QImage& image, const QRect& rect) {
@@ -389,6 +477,7 @@ CanvasWidget::CanvasWidget(QWidget* parent) : QWidget(parent) {
 }
 
 void CanvasWidget::setDocumentImage(const QImage& image) {
+    cancelInlineTextEdit();
     m_documentImage = image;
     m_annotations.clear();
     m_undoStates.clear();
@@ -420,6 +509,7 @@ void CanvasWidget::setDocumentImage(const QImage& image) {
 }
 
 void CanvasWidget::clearDocument() {
+    cancelInlineTextEdit();
     m_documentImage = QImage();
     m_annotations.clear();
     m_undoStates.clear();
@@ -503,6 +593,19 @@ QFont CanvasWidget::currentTextFont() const {
     return m_textFont;
 }
 
+QString CanvasWidget::currentEmojiText() const {
+    if (m_activeTool != QStringLiteral("Cursor")) {
+        return m_emojiText;
+    }
+    if (m_primarySelectedAnnotationIndex >= 0
+        && m_primarySelectedAnnotationIndex < m_annotations.size()
+        && m_selectedAnnotationIndices.contains(m_primarySelectedAnnotationIndex)
+        && m_annotations.at(m_primarySelectedAnnotationIndex).type == AnnotationType::Emoji) {
+        return m_annotations.at(m_primarySelectedAnnotationIndex).text;
+    }
+    return m_emojiText;
+}
+
 Qt::Alignment CanvasWidget::currentTextHorizontalAlignment() const {
     if (m_activeTool != QStringLiteral("Cursor")) {
         return m_textHorizontalAlignment;
@@ -567,8 +670,12 @@ bool CanvasWidget::currentShadowEnabled() const {
     if (m_activeTool != QStringLiteral("Cursor")) {
         return m_shadowEnabled;
     }
-    if (m_primarySelectedAnnotationIndex >= 0 && m_primarySelectedAnnotationIndex < m_annotations.size() && m_selectedAnnotationIndices.contains(m_primarySelectedAnnotationIndex) && isTextLike(m_annotations.at(m_primarySelectedAnnotationIndex))) {
-        return m_annotations.at(m_primarySelectedAnnotationIndex).shadowEnabled;
+    if (m_primarySelectedAnnotationIndex >= 0 && m_primarySelectedAnnotationIndex < m_annotations.size() && m_selectedAnnotationIndices.contains(m_primarySelectedAnnotationIndex)) {
+        const Annotation& annotation = m_annotations.at(m_primarySelectedAnnotationIndex);
+        if (annotationTypeSupportsShadow(annotation.type)) {
+            return annotation.shadowEnabled;
+        }
+        return false;
     }
     return m_shadowEnabled;
 }
@@ -658,6 +765,10 @@ QImage CanvasWidget::renderObfuscationMask(const Annotation* previewAnnotation) 
 void CanvasWidget::setZoomFactor(double zoomFactor) {
     m_zoomFactor = qMax(0.1, zoomFactor);
     updateCanvasSize();
+    if (hasActiveInlineTextEdit()) {
+        applyInlineTextEditorStyle(m_inlineEditAnnotation);
+        updateInlineTextEditorGeometry();
+    }
     update();
 }
 
@@ -666,6 +777,9 @@ double CanvasWidget::zoomFactor() const {
 }
 
 void CanvasWidget::setActiveTool(const QString& toolName) {
+    if (hasActiveInlineTextEdit() && toolName != m_activeTool) {
+        commitInlineTextEdit();
+    }
     storeCurrentToolStyle();
     m_activeTool = toolName;
     m_isDrawingAnnotation = false;
@@ -690,6 +804,7 @@ void CanvasWidget::setStrokeColor(const QColor& color) {
         updateUndoRedoState();
     }
 
+    refreshInlineTextEdit();
     update();
 }
 
@@ -704,6 +819,7 @@ void CanvasWidget::setFillColor(const QColor& color) {
         updateUndoRedoState();
     }
 
+    refreshInlineTextEdit();
     update();
 }
 
@@ -718,6 +834,7 @@ void CanvasWidget::setStrokeWidth(int width) {
         updateUndoRedoState();
     }
 
+    refreshInlineTextEdit();
     update();
 }
 
@@ -734,6 +851,40 @@ void CanvasWidget::setTextFont(const QFont& font) {
         updateUndoRedoState();
         update();
     }
+
+    refreshInlineTextEdit();
+}
+
+void CanvasWidget::setEmojiText(const QString& emojiText) {
+    if (emojiText.isEmpty()) {
+        return;
+    }
+
+    m_emojiText = emojiText;
+
+    bool changedSelection = false;
+    if (hasSelection()) {
+        for (int index : m_selectedAnnotationIndices) {
+            if (m_annotations[index].type == AnnotationType::Emoji && m_annotations[index].text != emojiText) {
+                changedSelection = true;
+                break;
+            }
+        }
+        if (changedSelection) {
+            pushUndoState();
+            for (int index : m_selectedAnnotationIndices) {
+                if (m_annotations[index].type == AnnotationType::Emoji) {
+                    m_annotations[index].text = emojiText;
+                }
+            }
+            updateUndoRedoState();
+            update();
+        }
+    }
+
+    if (m_activeTool == QStringLiteral("Emoji") || !changedSelection) {
+        storeCurrentToolStyle();
+    }
 }
 
 void CanvasWidget::setTextHorizontalAlignment(Qt::Alignment alignment) {
@@ -748,6 +899,8 @@ void CanvasWidget::setTextHorizontalAlignment(Qt::Alignment alignment) {
         updateUndoRedoState();
         update();
     }
+
+    refreshInlineTextEdit();
 }
 
 void CanvasWidget::setTextVerticalAlignment(Qt::Alignment alignment) {
@@ -762,6 +915,8 @@ void CanvasWidget::setTextVerticalAlignment(Qt::Alignment alignment) {
         updateUndoRedoState();
         update();
     }
+
+    refreshInlineTextEdit();
 }
 
 void CanvasWidget::setArrowHeadMode(ArrowHeadMode mode) {
@@ -823,15 +978,28 @@ void CanvasWidget::setMagnificationFactor(int factor) {
 void CanvasWidget::setShadowEnabled(bool enabled) {
     m_shadowEnabled = enabled;
     if (hasSelection()) {
+        bool changed = false;
+        for (int index : m_selectedAnnotationIndices) {
+            if (annotationTypeSupportsShadow(m_annotations[index].type) && m_annotations[index].shadowEnabled != enabled) {
+                changed = true;
+                break;
+            }
+        }
+        if (!changed) {
+            return;
+        }
+
         pushUndoState();
         for (int index : m_selectedAnnotationIndices) {
-            if (isTextLike(m_annotations[index])) {
+            if (annotationTypeSupportsShadow(m_annotations[index].type)) {
                 m_annotations[index].shadowEnabled = enabled;
             }
         }
         updateUndoRedoState();
         update();
     }
+
+    refreshInlineTextEdit();
 }
 
 void CanvasWidget::setCounterStart(int value) {
@@ -1026,6 +1194,8 @@ QJsonObject CanvasWidget::serializeAnnotation(const Annotation& annotation) {
     object[QStringLiteral("startY")] = annotation.start.y();
     object[QStringLiteral("endX")] = annotation.end.x();
     object[QStringLiteral("endY")] = annotation.end.y();
+    object[QStringLiteral("tailX")] = annotation.tail.x();
+    object[QStringLiteral("tailY")] = annotation.tail.y();
     object[QStringLiteral("strokeColor")] = annotation.strokeColor.name(QColor::HexArgb);
     object[QStringLiteral("fillColor")] = annotation.fillColor.name(QColor::HexArgb);
     object[QStringLiteral("strokeWidth")] = annotation.strokeWidth;
@@ -1060,6 +1230,8 @@ CanvasWidget::Annotation CanvasWidget::deserializeAnnotation(const QJsonObject& 
     annotation.type = static_cast<AnnotationType>(object.value(QStringLiteral("type")).toInt());
     annotation.start = QPointF(object.value(QStringLiteral("startX")).toDouble(), object.value(QStringLiteral("startY")).toDouble());
     annotation.end = QPointF(object.value(QStringLiteral("endX")).toDouble(), object.value(QStringLiteral("endY")).toDouble());
+    const QRectF rect = normalizedRect(annotation.start, annotation.end);
+    annotation.tail = QPointF(object.value(QStringLiteral("tailX")).toDouble(rect.left() + 8.0), object.value(QStringLiteral("tailY")).toDouble(rect.bottom() + 18.0));
     annotation.strokeColor = QColor(object.value(QStringLiteral("strokeColor")).toString(QStringLiteral("#ffcc2f2f")));
     annotation.fillColor = QColor(object.value(QStringLiteral("fillColor")).toString(QStringLiteral("#fffff2cc")));
     annotation.strokeWidth = object.value(QStringLiteral("strokeWidth")).toInt(1);
@@ -1118,6 +1290,7 @@ void CanvasWidget::syncModifiedState() {
 void CanvasWidget::transformAnnotation(Annotation& annotation, const QTransform& transform, bool scaleFont, qreal fontScale) const {
     annotation.start = mappedPoint(transform, annotation.start);
     annotation.end = mappedPoint(transform, annotation.end);
+    annotation.tail = mappedPoint(transform, annotation.tail);
     for (QPointF& point : annotation.points) {
         point = mappedPoint(transform, point);
     }
@@ -1129,6 +1302,7 @@ void CanvasWidget::transformAnnotation(Annotation& annotation, const QTransform&
 void CanvasWidget::translateAnnotation(Annotation& annotation, const QPointF& delta) const {
     annotation.start += delta;
     annotation.end += delta;
+    annotation.tail += delta;
     for (QPointF& point : annotation.points) {
         point += delta;
     }
@@ -1154,6 +1328,7 @@ void CanvasWidget::scaleAnnotationBounds(Annotation& annotation, const QRectF& s
 
     annotation.start = scalePoint(annotation.start);
     annotation.end = scalePoint(annotation.end);
+    annotation.tail = scalePoint(annotation.tail);
     for (QPointF& point : annotation.points) {
         point = scalePoint(point);
     }
@@ -1350,6 +1525,10 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
         drawPendingCrop(painter, m_zoomFactor);
     }
 
+    if (hasActiveInlineTextEdit() && m_inlineEditIsNew && m_inlineEditAnnotation.type == AnnotationType::SpeechBubble) {
+        drawAnnotation(painter, m_inlineEditAnnotation, m_zoomFactor, &renderedImage, &obfuscationSourceImage, &obfuscationMaskImage);
+    }
+
     if (m_isDrawingAnnotation) {
         drawAnnotation(painter, m_previewAnnotation, m_zoomFactor, &renderedImage, &obfuscationSourceImage, &obfuscationMaskImage);
     }
@@ -1366,6 +1545,20 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
     m_lastPointerImagePoint = imagePoint;
 
     if (m_activeTool == QStringLiteral("Cursor")) {
+        const ResizeHandle existingSelectionHandle = hitTestResizeHandle(imagePoint);
+        if (existingSelectionHandle != ResizeHandle::None) {
+            m_activeResizeHandle = existingSelectionHandle;
+            m_isResizingSelection = true;
+            m_isMovingSelection = false;
+            m_moveUndoRecorded = false;
+            m_resizeUndoRecorded = false;
+            m_selectionMoved = false;
+            m_selectionResized = false;
+            Q_EMIT statusMessageChanged(QStringLiteral("Resize handle selected."));
+            update();
+            return;
+        }
+
         const int hitIndex = hitTestAnnotation(imagePoint);
         const bool additive = event->modifiers().testFlag(Qt::ControlModifier);
         selectAnnotation(hitIndex, additive);
@@ -1386,135 +1579,66 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
     }
 
     if (m_activeTool == QStringLiteral("Text")) {
-        bool accepted = false;
-        const QString text = QInputDialog::getMultiLineText(this,
-            QStringLiteral("Add Text"),
-            QStringLiteral("Text"),
-            QString(),
-            &accepted);
-
-        if (accepted && !text.trimmed().isEmpty()) {
-            pushUndoState();
-            Annotation annotation;
-            annotation.type = AnnotationType::Text;
-            annotation.start = imagePoint;
-            annotation.end = imagePoint + QPointF(220.0, 90.0);
-            annotation.strokeColor = m_strokeColor;
-            annotation.fillColor = m_fillColor;
-            annotation.strokeWidth = m_strokeWidth;
-            annotation.text = text;
-            annotation.font = m_textFont;
-            annotation.textHorizontalAlignment = m_textHorizontalAlignment;
-            annotation.textVerticalAlignment = m_textVerticalAlignment;
-            annotation.pixelSize = m_pixelSize;
-            annotation.blurRadius = m_blurRadius;
-            annotation.magnificationFactor = m_magnificationFactor;
-            m_annotations.push_back(annotation);
-            selectAnnotation(m_annotations.size() - 1);
-            updateUndoRedoState();
-            update();
-            Q_EMIT statusMessageChanged(QStringLiteral("Text added."));
-        }
+        Annotation annotation;
+        annotation.type = AnnotationType::Text;
+        annotation.start = imagePoint;
+        annotation.end = imagePoint + QPointF(220.0, 90.0);
+        annotation.strokeColor = m_strokeColor;
+        annotation.fillColor = m_fillColor;
+        annotation.strokeWidth = m_strokeWidth;
+        annotation.font = m_textFont;
+        annotation.textHorizontalAlignment = m_textHorizontalAlignment;
+        annotation.textVerticalAlignment = m_textVerticalAlignment;
+        annotation.pixelSize = m_pixelSize;
+        annotation.blurRadius = m_blurRadius;
+        annotation.magnificationFactor = m_magnificationFactor;
+        annotation.shadowEnabled = annotationTypeSupportsShadow(annotation.type) ? m_shadowEnabled : false;
+        beginInlineTextCreation(annotation, QStringLiteral("Text added."));
         return;
     }
 
     if (m_activeTool == QStringLiteral("Emoji")) {
-        bool accepted = false;
-        const QString text = QInputDialog::getText(this,
-            QStringLiteral("Add Emoji"),
-            QStringLiteral("Emoji"),
-            QLineEdit::Normal,
-            QStringLiteral("😀"),
-            &accepted);
-
-        if (accepted && !text.trimmed().isEmpty()) {
-            pushUndoState();
-            Annotation annotation;
-            annotation.type = AnnotationType::Emoji;
-            annotation.start = imagePoint;
-            annotation.end = imagePoint + QPointF(48.0, 48.0);
-            annotation.strokeColor = m_strokeColor;
-            annotation.fillColor = m_fillColor;
-            annotation.strokeWidth = m_strokeWidth;
-            annotation.text = text;
-            annotation.font = QFont(m_textFont.family(), qMax(18, m_textFont.pointSize() + 10));
-            annotation.textHorizontalAlignment = m_textHorizontalAlignment;
-            annotation.textVerticalAlignment = m_textVerticalAlignment;
-            annotation.pixelSize = m_pixelSize;
-            annotation.blurRadius = m_blurRadius;
-            annotation.magnificationFactor = m_magnificationFactor;
-            m_annotations.push_back(annotation);
-            selectAnnotation(m_annotations.size() - 1);
-            updateUndoRedoState();
-            update();
-            Q_EMIT statusMessageChanged(QStringLiteral("Emoji added."));
-        }
+        constexpr qreal emojiStampSize = 48.0;
+        pushUndoState();
+        Annotation annotation;
+        annotation.type = AnnotationType::Emoji;
+        annotation.start = imagePoint - QPointF(emojiStampSize / 2.0, emojiStampSize / 2.0);
+        annotation.end = imagePoint + QPointF(emojiStampSize / 2.0, emojiStampSize / 2.0);
+        annotation.strokeColor = m_strokeColor;
+        annotation.fillColor = m_fillColor;
+        annotation.strokeWidth = m_strokeWidth;
+        annotation.text = m_emojiText;
+        annotation.font = QFont(m_textFont.family(), qMax(18, m_textFont.pointSize() + 10));
+        annotation.textHorizontalAlignment = m_textHorizontalAlignment;
+        annotation.textVerticalAlignment = m_textVerticalAlignment;
+        annotation.pixelSize = m_pixelSize;
+        annotation.blurRadius = m_blurRadius;
+        annotation.magnificationFactor = m_magnificationFactor;
+        annotation.shadowEnabled = annotationTypeSupportsShadow(annotation.type) ? m_shadowEnabled : false;
+        m_annotations.push_back(annotation);
+        selectAnnotation(m_annotations.size() - 1);
+        updateUndoRedoState();
+        update();
+        Q_EMIT statusMessageChanged(QStringLiteral("Emoji stamped."));
         return;
     }
 
     if (m_activeTool == QStringLiteral("Text Highlight")) {
-        bool accepted = false;
-        const QString text = QInputDialog::getMultiLineText(this,
-            QStringLiteral("Add Highlighted Text"),
-            QStringLiteral("Text"),
-            QString(),
-            &accepted);
-
-        if (accepted && !text.trimmed().isEmpty()) {
-            pushUndoState();
-            Annotation annotation;
-            annotation.type = AnnotationType::TextHighlight;
-            annotation.start = imagePoint;
-            annotation.end = imagePoint + QPointF(220.0, 90.0);
-            annotation.strokeColor = QColor(QStringLiteral("#1f1f1f"));
-            annotation.fillColor = QColor(QStringLiteral("#ffe96b"));
-            annotation.strokeWidth = m_strokeWidth;
-            annotation.text = text;
-            annotation.font = m_textFont;
-            annotation.textHorizontalAlignment = m_textHorizontalAlignment;
-            annotation.textVerticalAlignment = m_textVerticalAlignment;
-            annotation.pixelSize = m_pixelSize;
-            annotation.blurRadius = m_blurRadius;
-            annotation.magnificationFactor = m_magnificationFactor;
-            m_annotations.push_back(annotation);
-            selectAnnotation(m_annotations.size() - 1);
-            updateUndoRedoState();
-            update();
-            Q_EMIT statusMessageChanged(QStringLiteral("Text highlight added."));
-        }
-        return;
-    }
-
-    if (m_activeTool == QStringLiteral("Speech bubble")) {
-        bool accepted = false;
-        const QString text = QInputDialog::getMultiLineText(this,
-            QStringLiteral("Add Speech Bubble"),
-            QStringLiteral("Text"),
-            QString(),
-            &accepted);
-
-        if (accepted && !text.trimmed().isEmpty()) {
-            pushUndoState();
-            Annotation annotation;
-            annotation.type = AnnotationType::SpeechBubble;
-            annotation.start = imagePoint;
-            annotation.end = imagePoint + QPointF(180.0, 90.0);
-            annotation.strokeColor = m_strokeColor;
-            annotation.fillColor = m_fillColor;
-            annotation.strokeWidth = m_strokeWidth;
-            annotation.text = text;
-            annotation.font = m_textFont;
-            annotation.textHorizontalAlignment = m_textHorizontalAlignment;
-            annotation.textVerticalAlignment = m_textVerticalAlignment;
-            annotation.pixelSize = m_pixelSize;
-            annotation.blurRadius = m_blurRadius;
-            annotation.magnificationFactor = m_magnificationFactor;
-            m_annotations.push_back(annotation);
-            selectAnnotation(m_annotations.size() - 1);
-            updateUndoRedoState();
-            update();
-            Q_EMIT statusMessageChanged(QStringLiteral("Speech bubble added."));
-        }
+        Annotation annotation;
+        annotation.type = AnnotationType::TextHighlight;
+        annotation.start = imagePoint;
+        annotation.end = imagePoint + QPointF(220.0, 90.0);
+        annotation.strokeColor = QColor(QStringLiteral("#1f1f1f"));
+        annotation.fillColor = QColor(QStringLiteral("#ffe96b"));
+        annotation.strokeWidth = m_strokeWidth;
+        annotation.font = m_textFont;
+        annotation.textHorizontalAlignment = m_textHorizontalAlignment;
+        annotation.textVerticalAlignment = m_textVerticalAlignment;
+        annotation.pixelSize = m_pixelSize;
+        annotation.blurRadius = m_blurRadius;
+        annotation.magnificationFactor = m_magnificationFactor;
+        annotation.shadowEnabled = annotationTypeSupportsShadow(annotation.type) ? m_shadowEnabled : false;
+        beginInlineTextCreation(annotation, QStringLiteral("Text highlight added."));
         return;
     }
 
@@ -1534,7 +1658,7 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
         annotation.pixelSize = m_pixelSize;
         annotation.blurRadius = m_blurRadius;
         annotation.magnificationFactor = m_magnificationFactor;
-        annotation.shadowEnabled = m_shadowEnabled;
+        annotation.shadowEnabled = annotationTypeSupportsShadow(annotation.type) ? m_shadowEnabled : false;
         annotation.stepSequence = nextStepSequence();
         m_annotations.push_back(annotation);
         selectAnnotation(m_annotations.size() - 1);
@@ -1545,11 +1669,13 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
     }
 
     if (isDrawableTool()) {
+        const AnnotationType previewType = annotationTypeForTool();
         m_isDrawingAnnotation = true;
             m_previewAnnotation = Annotation{
-                annotationTypeForTool(),
+                previewType,
                 imagePoint,
                 imagePoint,
+                QPointF(),
                 m_strokeColor,
                 m_fillColor,
                 m_strokeWidth,
@@ -1562,7 +1688,11 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
                 m_pixelSize,
                 m_blurRadius,
                 m_magnificationFactor,
+                annotationTypeSupportsShadow(previewType) ? m_shadowEnabled : false,
             };
+        if (m_previewAnnotation.type == AnnotationType::SpeechBubble) {
+            updateSpeechBubbleGeometry(m_previewAnnotation, m_lastPointerImagePoint, imagePoint);
+        }
         if (m_previewAnnotation.type == AnnotationType::Freehand) {
             m_previewAnnotation.points.push_back(imagePoint);
         }
@@ -1582,6 +1712,7 @@ void CanvasWidget::mousePressEvent(QMouseEvent* event) {
             AnnotationType::Rectangle,
             imagePoint,
             imagePoint,
+            QPointF(),
             QColor(QStringLiteral("#2c7be5")),
             QColor(44, 123, 229, 32),
             2,
@@ -1617,26 +1748,13 @@ void CanvasWidget::mouseDoubleClickEvent(QMouseEvent* event) {
         return;
     }
 
-    Annotation& annotation = m_annotations[hitIndex];
-    if (!isTextLike(annotation)) {
+    const Annotation& annotation = m_annotations.at(hitIndex);
+    if (!supportsInlineTextEditing(annotation.type)) {
         QWidget::mouseDoubleClickEvent(event);
         return;
     }
 
-    bool accepted = false;
-    const QString text = QInputDialog::getMultiLineText(this,
-        QStringLiteral("Edit Text"),
-        QStringLiteral("Text"),
-        annotation.text,
-        &accepted);
-
-    if (accepted && !text.trimmed().isEmpty() && text != annotation.text) {
-        pushUndoState();
-        annotation.text = text;
-        updateUndoRedoState();
-        update();
-        Q_EMIT statusMessageChanged(QStringLiteral("Text updated."));
-    }
+    beginInlineTextEditing(hitIndex);
 }
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
@@ -1668,7 +1786,11 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-    m_previewAnnotation.end = imagePoint;
+    if (m_previewAnnotation.type == AnnotationType::SpeechBubble) {
+        updateSpeechBubbleGeometry(m_previewAnnotation, m_lastPointerImagePoint, imagePoint);
+    } else {
+        m_previewAnnotation.end = imagePoint;
+    }
     if (m_previewAnnotation.type == AnnotationType::Freehand) {
         m_previewAnnotation.points.push_back(imagePoint);
     }
@@ -1710,7 +1832,12 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
     }
 
     m_isDrawingAnnotation = false;
-    m_previewAnnotation.end = toImagePoint(event->position());
+    const QPointF releasePoint = toImagePoint(event->position());
+    if (m_previewAnnotation.type == AnnotationType::SpeechBubble) {
+        updateSpeechBubbleGeometry(m_previewAnnotation, m_lastPointerImagePoint, releasePoint);
+    } else {
+        m_previewAnnotation.end = releasePoint;
+    }
 
     if (m_activeTool == QStringLiteral("Crop")) {
         const QRectF rect = normalizedClampedRect(m_previewAnnotation.start, m_previewAnnotation.end);
@@ -1728,9 +1855,13 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent* event) {
     }
 
     if (annotationHasMinimumSize(m_previewAnnotation)) {
-        commitAnnotation(m_previewAnnotation);
-        selectAnnotation(m_annotations.size() - 1);
-        Q_EMIT statusMessageChanged(QStringLiteral("%1 added.").arg(m_activeTool));
+        if (m_previewAnnotation.type == AnnotationType::SpeechBubble) {
+            beginInlineTextCreation(m_previewAnnotation, QStringLiteral("Speech bubble added."));
+        } else {
+            commitAnnotation(m_previewAnnotation);
+            selectAnnotation(m_annotations.size() - 1);
+            Q_EMIT statusMessageChanged(QStringLiteral("%1 added.").arg(m_activeTool));
+        }
     } else {
         Q_EMIT statusMessageChanged(QStringLiteral("%1 canceled.").arg(m_activeTool));
     }
@@ -1805,11 +1936,35 @@ void CanvasWidget::wheelEvent(QWheelEvent* event) {
     QWidget::wheelEvent(event);
 }
 
+bool CanvasWidget::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_inlineTextEditor && m_inlineTextEditor != nullptr) {
+        if (event->type() == QEvent::KeyPress) {
+            auto* keyEvent = static_cast<QKeyEvent*>(event);
+            if (keyEvent->key() == Qt::Key_Escape) {
+                cancelInlineTextEdit();
+                return true;
+            }
+            if ((keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter)
+                && keyEvent->modifiers().testFlag(Qt::ControlModifier)) {
+                commitInlineTextEdit();
+                return true;
+            }
+        }
+
+        if (event->type() == QEvent::FocusOut && !m_inlineEditClosing) {
+            commitInlineTextEdit();
+        }
+    }
+
+    return QWidget::eventFilter(watched, event);
+}
+
 void CanvasWidget::updateCanvasSize() {
     const QSize baseSize = documentSize();
     const QSize scaledSize(qMax(1, qRound(baseSize.width() * m_zoomFactor)), qMax(1, qRound(baseSize.height() * m_zoomFactor)));
     setFixedSize(scaledSize);
     updateGeometry();
+    updateInlineTextEditorGeometry();
 }
 
 QPointF CanvasWidget::toImagePoint(const QPointF& widgetPoint) const {
@@ -1840,7 +1995,16 @@ QRectF CanvasWidget::textLayoutRect(const Annotation& annotation) const {
 }
 
 QRectF CanvasWidget::annotationBounds(const Annotation& annotation) const {
-    if (annotation.type == AnnotationType::Text || annotation.type == AnnotationType::Emoji || annotation.type == AnnotationType::TextHighlight) {
+    if (annotation.type == AnnotationType::Text || annotation.type == AnnotationType::TextHighlight) {
+        return normalizedClampedRect(annotation.start, annotation.end);
+    }
+
+    if (annotation.type == AnnotationType::SpeechBubble) {
+        const qreal pad = qMax<qreal>(kHitTolerance, annotation.strokeWidth + 4.0);
+        return speechBubblePath(annotation).boundingRect().adjusted(-pad, -pad, pad, pad);
+    }
+
+    if (annotation.type == AnnotationType::Emoji) {
         return textLayoutRect(annotation).adjusted(-4.0, -4.0, 4.0, 4.0);
     }
 
@@ -1863,16 +2027,174 @@ QRectF CanvasWidget::annotationBounds(const Annotation& annotation) const {
     return normalizedClampedRect(annotation.start, annotation.end);
 }
 
+QRectF CanvasWidget::inlineEditorRect(const Annotation& annotation) const {
+    QRectF rect = normalizedClampedRect(annotation.start, annotation.end);
+    if (annotation.type == AnnotationType::SpeechBubble) {
+        rect = rect.adjusted(10.0, 10.0, -10.0, -10.0);
+    }
+
+    rect.setWidth(qMax<qreal>(rect.width(), 120.0));
+    rect.setHeight(qMax<qreal>(rect.height(), 40.0));
+    return rect;
+}
+
+QPointF CanvasWidget::defaultSpeechBubbleTail(const Annotation& annotation) const {
+    const QRectF rect = normalizedClampedRect(annotation.start, annotation.end);
+    return QPointF(rect.left() + 8.0, rect.bottom() + 18.0);
+}
+
+void CanvasWidget::updateSpeechBubbleGeometry(Annotation& annotation, const QPointF& anchorPoint, const QPointF& dragPoint) const {
+    const QPointF delta = dragPoint - anchorPoint;
+    QRectF bodyRect = normalizedClampedRect(anchorPoint, dragPoint);
+    if (bodyRect.width() <= 0.0) {
+        bodyRect.setLeft(qMax<qreal>(0.0, anchorPoint.x() - 1.0));
+        bodyRect.setRight(qMin<qreal>(static_cast<qreal>(m_documentImage.width()), anchorPoint.x() + 1.0));
+    }
+    if (bodyRect.height() <= 0.0) {
+        bodyRect.setTop(qMax<qreal>(0.0, anchorPoint.y() - 1.0));
+        bodyRect.setBottom(qMin<qreal>(static_cast<qreal>(m_documentImage.height()), anchorPoint.y() + 1.0));
+    }
+
+    annotation.start = bodyRect.topLeft();
+    annotation.end = bodyRect.bottomRight();
+
+    QPointF direction = delta;
+    const qreal length = qSqrt((direction.x() * direction.x()) + (direction.y() * direction.y()));
+    if (length < 0.001) {
+        direction = QPointF(0.0, 1.0);
+    } else {
+        direction /= length;
+    }
+
+    const qreal stubLength = qMin<qreal>(18.0, qMax<qreal>(10.0, length * 0.18));
+    annotation.tail = QPointF(
+        qBound(0.0, anchorPoint.x() - (direction.x() * stubLength), static_cast<qreal>(m_documentImage.width())),
+        qBound(0.0, anchorPoint.y() - (direction.y() * stubLength), static_cast<qreal>(m_documentImage.height())));
+}
+
+QPainterPath CanvasWidget::speechBubblePath(const Annotation& annotation) const {
+    const QRectF rect = normalizedClampedRect(annotation.start, annotation.end);
+    QPainterPath bodyPath;
+    bodyPath.addRoundedRect(rect, 12.0, 12.0);
+    if (!rect.isValid() || rect.width() <= 0.0 || rect.height() <= 0.0) {
+        return bodyPath;
+    }
+
+    const QPointF tailTip = annotation.tail;
+    const qreal cornerRadius = 12.0;
+    const qreal baseHalfWidth = qMax<qreal>(6.0, qMin<qreal>(12.0, qMin(rect.width(), rect.height()) / 4.0));
+    const qreal joinOverlap = qMin<qreal>(2.0, qMin(rect.width(), rect.height()) / 8.0);
+    const qreal horizontalInset = qMin(cornerRadius + baseHalfWidth, rect.width() / 2.0);
+    const qreal verticalInset = qMin(cornerRadius + baseHalfWidth, rect.height() / 2.0);
+    const qreal leftDistance = qAbs(tailTip.x() - rect.left());
+    const qreal rightDistance = qAbs(tailTip.x() - rect.right());
+    const qreal topDistance = qAbs(tailTip.y() - rect.top());
+    const qreal bottomDistance = qAbs(tailTip.y() - rect.bottom());
+    const qreal leftOverflow = qMax<qreal>(0.0, rect.left() - tailTip.x());
+    const qreal rightOverflow = qMax<qreal>(0.0, tailTip.x() - rect.right());
+    const qreal topOverflow = qMax<qreal>(0.0, rect.top() - tailTip.y());
+    const qreal bottomOverflow = qMax<qreal>(0.0, tailTip.y() - rect.bottom());
+
+    auto clampX = [&](qreal x) {
+        const qreal minimum = rect.left() + horizontalInset;
+        const qreal maximum = rect.right() - horizontalInset;
+        if (minimum > maximum) {
+            return rect.center().x();
+        }
+        return qBound(minimum, x, maximum);
+    };
+
+    auto clampY = [&](qreal y) {
+        const qreal minimum = rect.top() + verticalInset;
+        const qreal maximum = rect.bottom() - verticalInset;
+        if (minimum > maximum) {
+            return rect.center().y();
+        }
+        return qBound(minimum, y, maximum);
+    };
+
+    enum class BubbleEdge {
+        Left,
+        Right,
+        Top,
+        Bottom,
+    };
+
+    BubbleEdge edge = BubbleEdge::Bottom;
+    const qreal maxOverflow = qMax(qMax(leftOverflow, rightOverflow), qMax(topOverflow, bottomOverflow));
+    if (maxOverflow > 0.0) {
+        edge = BubbleEdge::Bottom;
+        qreal edgeOverflow = bottomOverflow;
+        if (leftOverflow > edgeOverflow) {
+            edge = BubbleEdge::Left;
+            edgeOverflow = leftOverflow;
+        }
+        if (rightOverflow > edgeOverflow) {
+            edge = BubbleEdge::Right;
+            edgeOverflow = rightOverflow;
+        }
+        if (topOverflow > edgeOverflow) {
+            edge = BubbleEdge::Top;
+        }
+    } else {
+        qreal edgeDistance = bottomDistance;
+        if (leftDistance < edgeDistance) {
+            edge = BubbleEdge::Left;
+            edgeDistance = leftDistance;
+        }
+        if (rightDistance < edgeDistance) {
+            edge = BubbleEdge::Right;
+            edgeDistance = rightDistance;
+        }
+        if (topDistance < edgeDistance) {
+            edge = BubbleEdge::Top;
+        }
+    }
+
+    QPolygonF tail;
+    switch (edge) {
+    case BubbleEdge::Left: {
+        const qreal centerY = clampY(tailTip.y());
+        tail << QPointF(rect.left() + joinOverlap, centerY - baseHalfWidth)
+             << QPointF(rect.left() + joinOverlap, centerY + baseHalfWidth)
+             << tailTip;
+        break;
+    }
+    case BubbleEdge::Right: {
+        const qreal centerY = clampY(tailTip.y());
+        tail << QPointF(rect.right() - joinOverlap, centerY - baseHalfWidth)
+             << QPointF(rect.right() - joinOverlap, centerY + baseHalfWidth)
+             << tailTip;
+        break;
+    }
+    case BubbleEdge::Top: {
+        const qreal centerX = clampX(tailTip.x());
+        tail << QPointF(centerX - baseHalfWidth, rect.top() + joinOverlap)
+             << QPointF(centerX + baseHalfWidth, rect.top() + joinOverlap)
+             << tailTip;
+        break;
+    }
+    case BubbleEdge::Bottom: {
+        const qreal centerX = clampX(tailTip.x());
+        tail << QPointF(centerX - baseHalfWidth, rect.bottom() - joinOverlap)
+             << QPointF(centerX + baseHalfWidth, rect.bottom() - joinOverlap)
+             << tailTip;
+        break;
+    }
+    }
+
+    QPainterPath tailPath;
+    tailPath.addPolygon(tail);
+    tailPath.closeSubpath();
+    return bodyPath.united(tailPath);
+}
+
 CanvasWidget::ResizeHandle CanvasWidget::hitTestResizeHandle(const QPointF& imagePoint) const {
     if (m_primarySelectedAnnotationIndex < 0 || m_primarySelectedAnnotationIndex >= m_annotations.size()) {
         return ResizeHandle::None;
     }
 
     const Annotation& annotation = m_annotations.at(m_primarySelectedAnnotationIndex);
-    if (annotation.type == AnnotationType::Text) {
-        return ResizeHandle::None;
-    }
-
     auto nearPoint = [&](const QPointF& point) {
         return QLineF(point, imagePoint).length() <= kHandleSize;
     };
@@ -1885,6 +2207,10 @@ CanvasWidget::ResizeHandle CanvasWidget::hitTestResizeHandle(const QPointF& imag
             return ResizeHandle::LineEnd;
         }
         return ResizeHandle::None;
+    }
+
+    if (annotation.type == AnnotationType::SpeechBubble && nearPoint(annotation.tail)) {
+        return ResizeHandle::SpeechBubbleTail;
     }
 
     const QRectF rect = normalizedClampedRect(annotation.start, annotation.end);
@@ -1934,6 +2260,9 @@ CanvasWidget::AnnotationType CanvasWidget::annotationTypeForTool() const {
     if (m_activeTool == QStringLiteral("Text Highlight")) {
         return AnnotationType::TextHighlight;
     }
+    if (m_activeTool == QStringLiteral("Speech bubble")) {
+        return AnnotationType::SpeechBubble;
+    }
     if (m_activeTool == QStringLiteral("Highlight")) {
         return AnnotationType::Highlight;
     }
@@ -1953,7 +2282,7 @@ CanvasWidget::AnnotationType CanvasWidget::annotationTypeForTool() const {
 }
 
 bool CanvasWidget::isDrawableTool() const {
-    return m_activeTool == QStringLiteral("Rectangle") || m_activeTool == QStringLiteral("Ellipse") || m_activeTool == QStringLiteral("Line") || m_activeTool == QStringLiteral("Arrow") || m_activeTool == QStringLiteral("Freehand") || m_activeTool == QStringLiteral("Highlight") || m_activeTool == QStringLiteral("Obfuscate") || m_activeTool == QStringLiteral("Blur") || m_activeTool == QStringLiteral("Grayscale") || m_activeTool == QStringLiteral("Magnify");
+    return m_activeTool == QStringLiteral("Rectangle") || m_activeTool == QStringLiteral("Ellipse") || m_activeTool == QStringLiteral("Line") || m_activeTool == QStringLiteral("Arrow") || m_activeTool == QStringLiteral("Freehand") || m_activeTool == QStringLiteral("Speech bubble") || m_activeTool == QStringLiteral("Highlight") || m_activeTool == QStringLiteral("Obfuscate") || m_activeTool == QStringLiteral("Blur") || m_activeTool == QStringLiteral("Grayscale") || m_activeTool == QStringLiteral("Magnify");
 }
 
 bool CanvasWidget::isAutoCropMode() const {
@@ -1975,7 +2304,7 @@ bool CanvasWidget::annotationHasMinimumSize(const Annotation& annotation) const 
         return annotation.points.size() > 1;
     }
 
-    if (annotation.type == AnnotationType::SpeechBubble || annotation.type == AnnotationType::StepLabel) {
+    if (annotation.type == AnnotationType::StepLabel) {
         return true;
     }
 
@@ -1986,6 +2315,15 @@ bool CanvasWidget::annotationHasMinimumSize(const Annotation& annotation) const 
 int CanvasWidget::hitTestAnnotation(const QPointF& imagePoint) const {
     for (int index = m_annotations.size() - 1; index >= 0; --index) {
         const Annotation& annotation = m_annotations.at(index);
+        if (annotation.type == AnnotationType::SpeechBubble) {
+            const QPainterPath path = speechBubblePath(annotation);
+            const qreal hitWidth = qMax<qreal>(kHitTolerance * 2.0, annotation.strokeWidth + 6.0);
+            if (path.contains(imagePoint) || createStrokePath(path, hitWidth).contains(imagePoint)) {
+                return index;
+            }
+            continue;
+        }
+
         if (annotation.type == AnnotationType::Line || annotation.type == AnnotationType::Arrow) {
             const QLineF line(annotation.start, annotation.end);
             if (line.length() <= 0.0) {
@@ -2025,6 +2363,14 @@ bool CanvasWidget::isSelected(int index) const {
 
 bool CanvasWidget::isTextLike(const Annotation& annotation) const {
     return annotation.type == AnnotationType::Text || annotation.type == AnnotationType::Emoji || annotation.type == AnnotationType::TextHighlight || annotation.type == AnnotationType::SpeechBubble || annotation.type == AnnotationType::StepLabel;
+}
+
+bool CanvasWidget::supportsInlineTextEditing(AnnotationType type) const {
+    return type == AnnotationType::Text || type == AnnotationType::TextHighlight || type == AnnotationType::SpeechBubble;
+}
+
+bool CanvasWidget::hasActiveInlineTextEdit() const {
+    return m_inlineTextEditor != nullptr && m_inlineTextEditor->isVisible();
 }
 
 QString CanvasWidget::editingContext() const {
@@ -2192,7 +2538,7 @@ void CanvasWidget::applyToolDefaults(const QString& toolName) {
     }
 
     if (toolName == QStringLiteral("Rectangle") || toolName == QStringLiteral("Ellipse")) {
-        m_fillColor = Qt::transparent;
+        m_fillColor = QColor(QStringLiteral("#6efff2cc"));
         m_strokeColor = QColor(Qt::red);
         m_strokeWidth = 2;
         m_shadowEnabled = true;
@@ -2322,6 +2668,7 @@ void CanvasWidget::storeCurrentToolStyle() {
     state.fillColor = m_fillColor;
     state.strokeWidth = m_strokeWidth;
     state.font = m_textFont;
+    state.emoji = m_emojiText;
     state.textHorizontalAlignment = m_textHorizontalAlignment;
     state.textVerticalAlignment = m_textVerticalAlignment;
     state.arrowHeadMode = m_arrowHeadMode;
@@ -2338,6 +2685,7 @@ void CanvasWidget::loadToolStyle(const QString& toolName) {
     m_fillColor = state.fillColor;
     m_strokeWidth = state.strokeWidth;
     m_textFont = state.font;
+    m_emojiText = state.emoji;
     m_textHorizontalAlignment = state.textHorizontalAlignment;
     m_textVerticalAlignment = state.textVerticalAlignment;
     m_arrowHeadMode = state.arrowHeadMode;
@@ -2440,6 +2788,9 @@ bool CanvasWidget::resizeSelectedAnnotation(ResizeHandle handle, const QPointF& 
         break;
     case ResizeHandle::LineEnd:
         resizedAnnotation.end = point;
+        break;
+    case ResizeHandle::SpeechBubbleTail:
+        resizedAnnotation.tail = point;
         break;
     case ResizeHandle::TopLeft:
         resizedAnnotation.start = point;
@@ -2706,6 +3057,224 @@ void CanvasWidget::commitAnnotation(const Annotation& annotation) {
     updateUndoRedoState();
 }
 
+void CanvasWidget::ensureInlineTextEditor() {
+    if (m_inlineTextEditor != nullptr) {
+        return;
+    }
+
+    m_inlineTextEditor = new QTextEdit(this);
+    m_inlineTextEditor->hide();
+    m_inlineTextEditor->setAcceptRichText(false);
+    m_inlineTextEditor->setLineWrapMode(QTextEdit::WidgetWidth);
+    m_inlineTextEditor->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_inlineTextEditor->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_inlineTextEditor->setTabChangesFocus(false);
+    m_inlineTextEditor->setFrameShape(QFrame::NoFrame);
+    m_inlineTextEditor->document()->setDocumentMargin(0.0);
+    m_inlineTextEditor->installEventFilter(this);
+}
+
+void CanvasWidget::applyInlineTextEditorStyle(const Annotation& annotation) {
+    if (m_inlineTextEditor == nullptr) {
+        return;
+    }
+
+    QFont font = annotation.font;
+    font.setPointSizeF(qMax(6.0, annotation.font.pointSizeF() * m_zoomFactor));
+    m_inlineTextEditor->setFont(font);
+
+    const Qt::Alignment horizontalAlignment = annotation.textHorizontalAlignment & (Qt::AlignLeft | Qt::AlignHCenter | Qt::AlignRight | Qt::AlignJustify);
+    m_inlineTextEditor->setAlignment(horizontalAlignment == Qt::Alignment() ? Qt::AlignLeft : horizontalAlignment);
+
+    auto cssColor = [](const QColor& color) {
+        return QStringLiteral("rgba(%1, %2, %3, %4)")
+            .arg(color.red())
+            .arg(color.green())
+            .arg(color.blue())
+            .arg(QString::number(color.alphaF(), 'f', 3));
+    };
+
+    QColor background = QColor(255, 255, 255, 48);
+    QString borderRadius = QStringLiteral("0px");
+    QString borderColor = cssColor(QColor(QStringLiteral("#2c7be5")));
+    if (annotation.type == AnnotationType::TextHighlight) {
+        background = annotation.fillColor;
+        background.setAlpha(180);
+    } else if (annotation.type == AnnotationType::SpeechBubble) {
+        background = QColor(0, 0, 0, 0);
+        borderRadius = QStringLiteral("12px");
+        borderColor = QStringLiteral("transparent");
+    }
+
+    m_inlineTextEditor->setStyleSheet(QStringLiteral(
+        "QTextEdit{"
+        "background:%1;"
+        "color:%2;"
+        "border:1px solid %3;"
+        "border-radius:%4;"
+        "padding:0px;"
+        "selection-background-color:rgba(44,123,229,0.35);"
+        "}"
+    ).arg(cssColor(background), cssColor(annotation.strokeColor), borderColor, borderRadius));
+}
+
+void CanvasWidget::updateInlineTextEditorGeometry() {
+    if (!hasActiveInlineTextEdit()) {
+        return;
+    }
+
+    const QRectF rect = inlineEditorRect(m_inlineEditAnnotation);
+    const QRect widgetRect(
+        qRound(rect.left() * m_zoomFactor),
+        qRound(rect.top() * m_zoomFactor),
+        qMax(80, qCeil(rect.width() * m_zoomFactor)),
+        qMax(28, qCeil(rect.height() * m_zoomFactor)));
+    m_inlineTextEditor->setGeometry(widgetRect);
+}
+
+void CanvasWidget::refreshInlineTextEdit() {
+    if (!hasActiveInlineTextEdit()) {
+        return;
+    }
+
+    if (m_inlineEditIsNew) {
+        m_inlineEditAnnotation.strokeColor = m_strokeColor;
+        m_inlineEditAnnotation.fillColor = m_fillColor;
+        m_inlineEditAnnotation.strokeWidth = m_strokeWidth;
+        m_inlineEditAnnotation.font = m_textFont;
+        m_inlineEditAnnotation.textHorizontalAlignment = m_textHorizontalAlignment;
+        m_inlineEditAnnotation.textVerticalAlignment = m_textVerticalAlignment;
+        m_inlineEditAnnotation.shadowEnabled = annotationTypeSupportsShadow(m_inlineEditAnnotation.type) ? m_shadowEnabled : false;
+    } else if (m_inlineEditIndex >= 0 && m_inlineEditIndex < m_annotations.size()) {
+        m_inlineEditAnnotation = m_annotations.at(m_inlineEditIndex);
+    }
+
+    applyInlineTextEditorStyle(m_inlineEditAnnotation);
+    updateInlineTextEditorGeometry();
+    update();
+}
+
+void CanvasWidget::beginInlineTextCreation(const Annotation& annotation, const QString& statusMessage) {
+    if (!supportsInlineTextEditing(annotation.type)) {
+        return;
+    }
+
+    ensureInlineTextEditor();
+    if (hasActiveInlineTextEdit()) {
+        commitInlineTextEdit();
+    }
+
+    m_inlineEditAnnotation = annotation;
+    m_inlineEditStatusMessage = statusMessage;
+    m_inlineEditIndex = -1;
+    m_inlineEditIsNew = true;
+    selectAnnotation(-1);
+
+    m_inlineTextEditor->clear();
+    applyInlineTextEditorStyle(m_inlineEditAnnotation);
+    m_inlineTextEditor->show();
+    m_inlineTextEditor->raise();
+    updateInlineTextEditorGeometry();
+    m_inlineTextEditor->setFocus(Qt::OtherFocusReason);
+    Q_EMIT statusMessageChanged(QStringLiteral("Type directly on the image. Click away or press Ctrl+Enter to save."));
+    update();
+}
+
+void CanvasWidget::beginInlineTextEditing(int index) {
+    if (index < 0 || index >= m_annotations.size()) {
+        return;
+    }
+
+    const Annotation& annotation = m_annotations.at(index);
+    if (!supportsInlineTextEditing(annotation.type)) {
+        return;
+    }
+
+    ensureInlineTextEditor();
+    if (hasActiveInlineTextEdit() && m_inlineEditIndex != index) {
+        commitInlineTextEdit();
+    }
+
+    m_inlineEditAnnotation = annotation;
+    m_inlineEditStatusMessage.clear();
+    m_inlineEditIndex = index;
+    m_inlineEditIsNew = false;
+    selectAnnotation(index);
+
+    m_inlineTextEditor->setPlainText(annotation.text);
+    applyInlineTextEditorStyle(m_inlineEditAnnotation);
+    m_inlineTextEditor->show();
+    m_inlineTextEditor->raise();
+    updateInlineTextEditorGeometry();
+    m_inlineTextEditor->setFocus(Qt::MouseFocusReason);
+    m_inlineTextEditor->moveCursor(QTextCursor::End);
+    Q_EMIT statusMessageChanged(QStringLiteral("Editing text on the image."));
+    update();
+}
+
+void CanvasWidget::finishInlineTextEdit(bool commitChanges) {
+    if (!hasActiveInlineTextEdit()) {
+        return;
+    }
+
+    m_inlineEditClosing = true;
+
+    const QString text = m_inlineTextEditor->toPlainText();
+    const QString trimmedText = text.trimmed();
+    const Annotation annotation = m_inlineEditAnnotation;
+    const QString statusMessage = m_inlineEditStatusMessage;
+    const int editIndex = m_inlineEditIndex;
+    const bool isNew = m_inlineEditIsNew;
+
+    m_inlineTextEditor->hide();
+
+    if (commitChanges) {
+        if (isNew) {
+            if (!trimmedText.isEmpty()) {
+                Annotation committedAnnotation = annotation;
+                committedAnnotation.text = text;
+                pushUndoState();
+                m_annotations.push_back(committedAnnotation);
+                selectAnnotation(m_annotations.size() - 1);
+                updateUndoRedoState();
+                Q_EMIT statusMessageChanged(statusMessage);
+            } else {
+                clearSelection();
+                Q_EMIT statusMessageChanged(QStringLiteral("Text canceled."));
+            }
+        } else if (editIndex >= 0 && editIndex < m_annotations.size()) {
+            selectAnnotation(editIndex);
+            if (!trimmedText.isEmpty() && text != m_annotations.at(editIndex).text) {
+                pushUndoState();
+                m_annotations[editIndex].text = text;
+                updateUndoRedoState();
+                Q_EMIT statusMessageChanged(QStringLiteral("Text updated."));
+            }
+        }
+    } else if (isNew) {
+        clearSelection();
+        Q_EMIT statusMessageChanged(QStringLiteral("Text canceled."));
+    } else if (editIndex >= 0 && editIndex < m_annotations.size()) {
+        selectAnnotation(editIndex);
+        Q_EMIT statusMessageChanged(QStringLiteral("Text edit canceled."));
+    }
+
+    m_inlineEditAnnotation = Annotation{};
+    m_inlineEditStatusMessage.clear();
+    m_inlineEditIndex = -1;
+    m_inlineEditIsNew = false;
+    m_inlineEditClosing = false;
+    update();
+}
+
+void CanvasWidget::commitInlineTextEdit() {
+    finishInlineTextEdit(true);
+}
+
+void CanvasWidget::cancelInlineTextEdit() {
+    finishInlineTextEdit(false);
+}
+
 QImage CanvasWidget::applyWholeImageGrayscale(const QImage& image) {
     return image.convertToFormat(QImage::Format_Grayscale8).convertToFormat(QImage::Format_ARGB32_Premultiplied);
 }
@@ -2799,16 +3368,23 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
 
     const QPointF scaledStart(annotation.start.x() * scale, annotation.start.y() * scale);
     const QPointF scaledEnd(annotation.end.x() * scale, annotation.end.y() * scale);
+    const bool suppressText = hasActiveInlineTextEdit()
+        && !m_inlineEditIsNew
+        && m_inlineEditIndex >= 0
+        && m_inlineEditIndex < m_annotations.size()
+        && annotation == m_annotations.at(m_inlineEditIndex);
 
     if (annotation.type == AnnotationType::Text || annotation.type == AnnotationType::Emoji) {
+        if (suppressText) {
+            return;
+        }
         painter.setFont(annotation.font);
         const QRectF textBox(annotation.start.x() * scale,
             annotation.start.y() * scale,
             qMax<qreal>(1.0, (annotation.end.x() - annotation.start.x()) * scale),
             qMax<qreal>(1.0, (annotation.end.y() - annotation.start.y()) * scale));
         if (annotation.shadowEnabled) {
-            painter.setPen(QColor(0, 0, 0, 120));
-            painter.drawText(textBox.translated(2.0, 2.0), annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap, annotation.text);
+            drawBlurredTextShadow(painter, textBox, annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap, annotation.text, QColor(0, 0, 0, 140));
         }
         painter.setPen(annotation.strokeColor);
         painter.drawText(textBox, annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap, annotation.text);
@@ -2817,14 +3393,16 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
 
     if (annotation.type == AnnotationType::TextHighlight) {
         painter.setFont(annotation.font);
-        const QRectF textRect = textLayoutRect(annotation);
+        const QRectF textRect = normalizedClampedRect(annotation.start, annotation.end);
         const QRectF scaledTextRect(textRect.left() * scale, textRect.top() * scale, textRect.width() * scale, textRect.height() * scale);
         QColor highlight = annotation.fillColor;
         highlight.setAlpha(160);
-        painter.fillRect(scaledTextRect.adjusted(-2, -1, 2, 1), highlight);
+        painter.fillRect(scaledTextRect, highlight);
+        if (suppressText) {
+            return;
+        }
         if (annotation.shadowEnabled) {
-            painter.setPen(QColor(0, 0, 0, 120));
-            painter.drawText(scaledTextRect.translated(2.0, 2.0), annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap, annotation.text);
+            drawBlurredTextShadow(painter, scaledTextRect, annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap, annotation.text, QColor(0, 0, 0, 140));
         }
         painter.setPen(annotation.strokeColor);
         painter.drawText(scaledTextRect, annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap, annotation.text);
@@ -2833,17 +3411,22 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
 
     if (annotation.type == AnnotationType::SpeechBubble) {
         const QRectF rect = normalizedClampedRect(annotation.start, annotation.end);
-        const QRectF scaledRect(rect.left() * scale, rect.top() * scale, rect.width() * scale, rect.height() * scale);
+        const QRectF scaledRect = ::scaledRect(rect, scale);
+        QTransform scaleTransform;
+        scaleTransform.scale(scale, scale);
+        const QPainterPath bubblePath = scaleTransform.map(speechBubblePath(annotation));
+        if (annotation.shadowEnabled) {
+            QPainterPath shadowPath = bubblePath.united(createStrokePath(bubblePath, qMax<qreal>(1.0, annotation.strokeWidth * scale)));
+            drawBlurredShadowPath(painter, shadowPath, QColor(0, 0, 0, 110));
+        }
         painter.setBrush(annotation.fillColor);
         painter.setPen(QPen(annotation.strokeColor, qMax(1, qRound(annotation.strokeWidth * scale))));
-        painter.drawRoundedRect(scaledRect, 12.0, 12.0);
-        const QPointF tailBase((rect.left() + 30.0) * scale, rect.bottom() * scale);
-        QPolygonF tail;
-        tail << tailBase << QPointF(tailBase.x() + 20.0, tailBase.y()) << QPointF((rect.left() + 8.0) * scale, (rect.bottom() + 18.0) * scale);
-        painter.drawPolygon(tail);
+        painter.drawPath(bubblePath);
+        if (suppressText) {
+            return;
+        }
         if (annotation.shadowEnabled) {
-            painter.setPen(QColor(0, 0, 0, 120));
-            painter.drawText(scaledRect.adjusted(12.0, 12.0, -8.0, -8.0), annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap, annotation.text);
+            drawBlurredTextShadow(painter, scaledRect.adjusted(10.0, 10.0, -10.0, -10.0), annotation.textHorizontalAlignment | annotation.textVerticalAlignment | Qt::TextWordWrap, annotation.text, QColor(0, 0, 0, 135));
         }
         painter.setPen(QPen(annotation.strokeColor));
         painter.setFont(annotation.font);
@@ -2855,14 +3438,16 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
         const QRectF rect = normalizedClampedRect(annotation.start, annotation.end);
         const QRectF scaledRect = ::scaledRect(rect, scale);
         const QString text = stepLabelText(annotation);
+        QPainterPath stepPath;
+        stepPath.addEllipse(scaledRect);
+        if (annotation.shadowEnabled) {
+            drawBlurredShadowPath(painter, stepPath, QColor(0, 0, 0, 105));
+            painter.setFont(annotation.font);
+            drawBlurredTextShadow(painter, scaledRect, Qt::AlignCenter, text, QColor(0, 0, 0, 135));
+        }
         painter.setBrush(annotation.fillColor);
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(scaledRect);
-        if (annotation.shadowEnabled) {
-            painter.setPen(QColor(0, 0, 0, 120));
-            painter.setFont(annotation.font);
-            painter.drawText(scaledRect.translated(2.0, 2.0), Qt::AlignCenter, text);
-        }
         painter.setPen(QPen(annotation.strokeColor));
         painter.setFont(annotation.font);
         painter.drawText(scaledRect, Qt::AlignCenter, text);
@@ -2870,14 +3455,19 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
     }
 
     if (annotation.type == AnnotationType::Line || annotation.type == AnnotationType::Arrow) {
-        painter.drawLine(scaledStart, scaledEnd);
+        auto drawLineOrArrow = [&](const QPointF& start, const QPointF& end, const QColor& color) {
+            painter.setPen(QPen(color, qMax(1, qRound(annotation.strokeWidth * scale))));
+            painter.setBrush(color);
+            painter.drawLine(start, end);
 
-        if (annotation.type == AnnotationType::Arrow) {
-            const QPointF direction = scaledEnd - scaledStart;
+            if (annotation.type != AnnotationType::Arrow) {
+                return;
+            }
+
+            const QPointF direction = end - start;
             const qreal length = qSqrt((direction.x() * direction.x()) + (direction.y() * direction.y()));
             if (length > 0.0) {
                 const QPointF unit(direction.x() / length, direction.y() / length);
-                const QPointF normal(-unit.y(), unit.x());
                 const qreal headLength = qMax<qreal>(10.0, annotation.strokeWidth * scale * 3.5);
                 const qreal headWidth = qMax<qreal>(6.0, annotation.strokeWidth * scale * 2.0);
 
@@ -2887,18 +3477,53 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
                     const QPointF right = headBase - (QPointF(-directionUnit.y(), directionUnit.x()) * headWidth);
                     QPolygonF arrowHead;
                     arrowHead << tip << left << right;
-                    painter.setBrush(annotation.strokeColor);
+                    painter.setBrush(color);
                     painter.drawPolygon(arrowHead);
                 };
 
                 if (annotation.arrowHeadMode == ArrowHeadMode::End || annotation.arrowHeadMode == ArrowHeadMode::Both) {
-                    drawArrowHead(scaledEnd, unit);
+                    drawArrowHead(end, unit);
                 }
                 if (annotation.arrowHeadMode == ArrowHeadMode::Start || annotation.arrowHeadMode == ArrowHeadMode::Both) {
-                    drawArrowHead(scaledStart, -unit);
+                    drawArrowHead(start, -unit);
                 }
             }
+        };
+
+        if (annotation.shadowEnabled) {
+            QPainterPath lineShadowPath;
+            lineShadowPath.moveTo(scaledStart);
+            lineShadowPath.lineTo(scaledEnd);
+            lineShadowPath = createStrokePath(lineShadowPath, qMax<qreal>(1.0, annotation.strokeWidth * scale));
+            if (annotation.type == AnnotationType::Arrow) {
+                const QPointF direction = scaledEnd - scaledStart;
+                const qreal length = qSqrt((direction.x() * direction.x()) + (direction.y() * direction.y()));
+                if (length > 0.0) {
+                    const QPointF unit(direction.x() / length, direction.y() / length);
+                    const qreal headLength = qMax<qreal>(10.0, annotation.strokeWidth * scale * 3.5);
+                    const qreal headWidth = qMax<qreal>(6.0, annotation.strokeWidth * scale * 2.0);
+
+                    auto addArrowHeadShadow = [&](const QPointF& tip, const QPointF& directionUnit) {
+                        const QPointF headBase = tip - (directionUnit * headLength);
+                        const QPointF left = headBase + (QPointF(-directionUnit.y(), directionUnit.x()) * headWidth);
+                        const QPointF right = headBase - (QPointF(-directionUnit.y(), directionUnit.x()) * headWidth);
+                        QPainterPath arrowHeadPath;
+                        arrowHeadPath.addPolygon(QPolygonF() << tip << left << right);
+                        lineShadowPath = lineShadowPath.united(arrowHeadPath);
+                    };
+
+                    if (annotation.arrowHeadMode == ArrowHeadMode::End || annotation.arrowHeadMode == ArrowHeadMode::Both) {
+                        addArrowHeadShadow(scaledEnd, unit);
+                    }
+                    if (annotation.arrowHeadMode == ArrowHeadMode::Start || annotation.arrowHeadMode == ArrowHeadMode::Both) {
+                        addArrowHeadShadow(scaledStart, -unit);
+                    }
+                }
+            }
+            drawBlurredShadowPath(painter, lineShadowPath, QColor(0, 0, 0, 115));
         }
+
+        drawLineOrArrow(scaledStart, scaledEnd, annotation.strokeColor);
 
         return;
     }
@@ -2971,7 +3596,26 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
     }
 
     QColor fill = annotation.fillColor;
-    fill.setAlpha(110);
+
+    if (annotation.shadowEnabled) {
+        QPainterPath shapePath;
+        if (annotation.type == AnnotationType::Rectangle) {
+            shapePath.addRect(scaledRect);
+        } else {
+            shapePath.addEllipse(scaledRect);
+        }
+
+        QPainterPath shadowPath;
+        if (annotation.fillColor.alpha() > 0) {
+            shadowPath = shadowPath.united(shapePath);
+        }
+        if (annotation.strokeWidth > 0) {
+            shadowPath = shadowPath.united(createStrokePath(shapePath, qMax<qreal>(1.0, annotation.strokeWidth * scale)));
+        }
+        drawBlurredShadowPath(painter, shadowPath, QColor(0, 0, 0, 110));
+    }
+
+    painter.setPen(pen);
     painter.setBrush(fill);
 
     if (annotation.type == AnnotationType::Rectangle) {
@@ -2999,10 +3643,6 @@ void CanvasWidget::drawSelection(QPainter& painter, const Annotation& annotation
 }
 
 void CanvasWidget::drawResizeHandles(QPainter& painter, const Annotation& annotation, double scale) const {
-    if (annotation.type == AnnotationType::Text) {
-        return;
-    }
-
     painter.setPen(QPen(QColor(QStringLiteral("#2c7be5"))));
     painter.setBrush(QColor(QStringLiteral("#ffffff")));
 
@@ -3015,6 +3655,10 @@ void CanvasWidget::drawResizeHandles(QPainter& painter, const Annotation& annota
         drawHandle(annotation.start);
         drawHandle(annotation.end);
         return;
+    }
+
+    if (annotation.type == AnnotationType::SpeechBubble) {
+        drawHandle(annotation.tail);
     }
 
     const QRectF rect = normalizedClampedRect(annotation.start, annotation.end);
@@ -3050,7 +3694,7 @@ void CanvasWidget::drawPlaceholder(QPainter& painter) const {
 
     painter.setPen(QColor(QStringLiteral("#222222")));
     painter.setFont(titleFont);
-    painter.drawText(rect().adjusted(0, -22, 0, 0), Qt::AlignCenter, QStringLiteral("Blueshot Editor for Linux"));
+    painter.drawText(rect().adjusted(0, -22, 0, 0), Qt::AlignCenter, QStringLiteral("Blueshot Editor"));
 
     QFont bodyFont = painter.font();
     bodyFont.setPointSize(10);
