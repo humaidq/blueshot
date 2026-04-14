@@ -54,6 +54,7 @@ public:
     [[nodiscard]] bool hasDocument() const;
     [[nodiscard]] QSize documentSize() const;
     [[nodiscard]] QImage renderDocumentImage() const;
+    [[nodiscard]] QImage renderDocumentImageWithoutObfuscation() const;
 
     void setZoomFactor(double zoomFactor);
     [[nodiscard]] double zoomFactor() const;
@@ -242,7 +243,8 @@ private:
     void pushUndoState();
     void commitAnnotation(const Annotation& annotation);
     void updateUndoRedoState();
-    void drawAnnotation(QPainter& painter, const Annotation& annotation, double scale, const QImage* composedImage = nullptr) const;
+    [[nodiscard]] QImage renderObfuscationMask(const Annotation* previewAnnotation = nullptr) const;
+    void drawAnnotation(QPainter& painter, const Annotation& annotation, double scale, const QImage* composedImage = nullptr, const QImage* obfuscationSourceImage = nullptr, const QImage* obfuscationMaskImage = nullptr) const;
     void drawSelection(QPainter& painter, const Annotation& annotation, double scale) const;
     void drawResizeHandles(QPainter& painter, const Annotation& annotation, double scale) const;
     void drawPendingCrop(QPainter& painter, double scale) const;

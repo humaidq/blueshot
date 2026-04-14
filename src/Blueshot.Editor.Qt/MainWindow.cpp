@@ -1128,6 +1128,7 @@ void MainWindow::refreshPropertyVisibility(const QString& context) {
     const bool strokeLike = fillLike || context == QStringLiteral("Line") || context == QStringLiteral("Arrow") || context == QStringLiteral("Freehand") || context == QStringLiteral("Text") || context == QStringLiteral("Text Highlight");
     const bool arrowLike = context == QStringLiteral("Arrow");
     const bool stepLike = context == QStringLiteral("Step label");
+    const bool obfuscateLike = context == QStringLiteral("Obfuscate");
     const bool blurLike = context == QStringLiteral("Blur");
     const bool magnifyLike = context == QStringLiteral("Magnify");
     const bool cropLike = context == QStringLiteral("Crop") || context == QStringLiteral("CropPending");
@@ -1143,8 +1144,8 @@ void MainWindow::refreshPropertyVisibility(const QString& context) {
     if (m_verticalAlignmentAction != nullptr) m_verticalAlignmentAction->setVisible(textLike);
     if (m_arrowHeadLabelAction != nullptr) m_arrowHeadLabelAction->setVisible(arrowLike);
     if (m_arrowHeadAction != nullptr) m_arrowHeadAction->setVisible(arrowLike);
-    if (m_pixelSizeLabelAction != nullptr) m_pixelSizeLabelAction->setVisible(false);
-    if (m_pixelSizeAction != nullptr) m_pixelSizeAction->setVisible(false);
+    if (m_pixelSizeLabelAction != nullptr) m_pixelSizeLabelAction->setVisible(obfuscateLike);
+    if (m_pixelSizeAction != nullptr) m_pixelSizeAction->setVisible(obfuscateLike);
     if (m_blurRadiusLabelAction != nullptr) m_blurRadiusLabelAction->setVisible(blurLike);
     if (m_blurRadiusAction != nullptr) m_blurRadiusAction->setVisible(blurLike);
     if (m_magnificationFactorLabelAction != nullptr) m_magnificationFactorLabelAction->setVisible(magnifyLike);

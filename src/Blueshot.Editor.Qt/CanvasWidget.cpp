@@ -31,6 +31,7 @@ constexpr qreal kMinimumRectangleSide = 3.0;
 constexpr qreal kMinimumLineLength = 3.0;
 constexpr qreal kHitTolerance = 8.0;
 constexpr qreal kHandleSize = 8.0;
+constexpr int kObfuscationSamplingSafetyMargin = 10;
 constexpr auto kClipboardMimeType = "application/x-blueshot-editor-annotations";
 
 QPointF mappedPoint(const QTransform& transform, const QPointF& point) {
@@ -73,7 +74,124 @@ QColor averageImageColor(const QImage& image, const QRect& rect) {
     return QColor(static_cast<int>(red / count), static_cast<int>(green / count), static_cast<int>(blue / count), static_cast<int>(alpha / count));
 }
 
-QImage createRedactionFill(const QImage& source, const QRect& sourceRect, quint32 seed) {
+QColor neutralObfuscationColor() {
+    return QColor(QStringLiteral("#8f8f8f"));
+}
+
+bool isMaskedPixel(const QImage* maskImage, int x, int y) {
+    return maskImage != nullptr && maskImage->rect().contains(x, y) && qAlpha(maskImage->pixel(x, y)) > 0;
+}
+
+QColor averageImageColorMasked(const QImage& image, const QRect& rect, const QImage* maskImage, qint64* sampleCount = nullptr) {
+    const QRect boundedRect = rect.intersected(image.rect());
+    if (boundedRect.isEmpty()) {
+        if (sampleCount != nullptr) {
+            *sampleCount = 0;
+        }
+        return neutralObfuscationColor();
+    }
+
+    qint64 red = 0;
+    qint64 green = 0;
+    qint64 blue = 0;
+    qint64 alpha = 0;
+    qint64 count = 0;
+    for (int y = boundedRect.top(); y <= boundedRect.bottom(); ++y) {
+        for (int x = boundedRect.left(); x <= boundedRect.right(); ++x) {
+            if (isMaskedPixel(maskImage, x, y)) {
+                continue;
+            }
+
+            const QColor color = QColor::fromRgba(image.pixel(x, y));
+            red += color.red();
+            green += color.green();
+            blue += color.blue();
+            alpha += color.alpha();
+            ++count;
+        }
+    }
+
+    if (count <= 0) {
+        if (sampleCount != nullptr) {
+            *sampleCount = 0;
+        }
+        return neutralObfuscationColor();
+    }
+    if (sampleCount != nullptr) {
+        *sampleCount = count;
+    }
+    return QColor(static_cast<int>(red / count), static_cast<int>(green / count), static_cast<int>(blue / count), static_cast<int>(alpha / count));
+}
+
+QColor adaptiveAverageImageColorAroundRect(const QImage& image, const QRect& excludedRect, const QImage* maskImage, int initialMargin, int minimumSamples) {
+    const int maxMargin = qMax(image.width(), image.height());
+    for (int margin = qMax(1, initialMargin); margin <= maxMargin; margin *= 2) {
+        const QRect searchRect = excludedRect.adjusted(-margin, -margin, margin, margin).intersected(image.rect());
+        qint64 sampleCount = 0;
+        const QColor color = averageImageColorMasked(image, searchRect, maskImage, &sampleCount);
+        if (sampleCount >= minimumSamples) {
+            return color;
+        }
+    }
+
+    return neutralObfuscationColor();
+}
+
+QPainterPath createSteppedBlockPath(const QRectF& bounds, int variant, qreal stepSize) {
+    const qreal left = bounds.left();
+    const qreal top = bounds.top();
+    const qreal right = bounds.right();
+    const qreal bottom = bounds.bottom();
+    const qreal step = qMax<qreal>(1.0, qMin(stepSize, qMin(bounds.width(), bounds.height()) / 2.0));
+
+    QPainterPath path;
+    switch (variant % 4) {
+    case 0:
+        path.moveTo(left, top);
+        path.lineTo(right - step, top);
+        path.lineTo(right - step, top + step);
+        path.lineTo(right, top + step);
+        path.lineTo(right, bottom);
+        path.lineTo(left + step, bottom);
+        path.lineTo(left + step, bottom - step);
+        path.lineTo(left, bottom - step);
+        break;
+    case 1:
+        path.moveTo(left + step, top);
+        path.lineTo(right, top);
+        path.lineTo(right, bottom - step);
+        path.lineTo(right - step, bottom - step);
+        path.lineTo(right - step, bottom);
+        path.lineTo(left, bottom);
+        path.lineTo(left, top + step);
+        path.lineTo(left + step, top + step);
+        break;
+    case 2:
+        path.moveTo(left, top + step);
+        path.lineTo(left + step, top + step);
+        path.lineTo(left + step, top);
+        path.lineTo(right, top);
+        path.lineTo(right, bottom - step);
+        path.lineTo(right - step, bottom - step);
+        path.lineTo(right - step, bottom);
+        path.lineTo(left, bottom);
+        break;
+    default:
+        path.moveTo(left, top);
+        path.lineTo(right, top);
+        path.lineTo(right, bottom - step);
+        path.lineTo(right - step, bottom - step);
+        path.lineTo(right - step, bottom);
+        path.lineTo(left + step, bottom);
+        path.lineTo(left + step, top + step);
+        path.lineTo(left, top + step);
+        break;
+    }
+    path.closeSubpath();
+    return path;
+}
+
+QImage createRedactionFill(const QImage& source, const QRect& sourceRect, const QImage* maskImage, quint32 seed, int pixelSize) {
     if (sourceRect.isEmpty()) {
         return QImage();
     }
@@ -82,11 +200,26 @@ QImage createRedactionFill(const QImage& source, const QRect& sourceRect, quint3
     output.fill(Qt::transparent);
 
     const int sampleBand = qMax(4, qMin(18, qMin(sourceRect.width(), sourceRect.height()) / 5));
-    const QColor topColor = averageImageColor(source, QRect(sourceRect.left(), sourceRect.top() - sampleBand, sourceRect.width(), sampleBand));
-    const QColor bottomColor = averageImageColor(source, QRect(sourceRect.left(), sourceRect.bottom() + 1, sourceRect.width(), sampleBand));
-    const QColor leftColor = averageImageColor(source, QRect(sourceRect.left() - sampleBand, sourceRect.top(), sampleBand, sourceRect.height()));
-    const QColor rightColor = averageImageColor(source, QRect(sourceRect.right() + 1, sourceRect.top(), sampleBand, sourceRect.height()));
-    const QColor fallbackColor = averageImageColor(source, sourceRect.adjusted(-sampleBand, -sampleBand, sampleBand, sampleBand));
+    const int minimumSamples = qMax(12, (sampleBand * sampleBand) / 2);
+    const QColor adaptiveFallbackColor = adaptiveAverageImageColorAroundRect(source, sourceRect, maskImage, sampleBand * 2, minimumSamples);
+    qint64 sampleCount = 0;
+    QColor topColor = averageImageColorMasked(source, QRect(sourceRect.left(), sourceRect.top() - sampleBand, sourceRect.width(), sampleBand), maskImage, &sampleCount);
+    if (sampleCount < minimumSamples) {
+        topColor = adaptiveFallbackColor;
+    }
+    QColor bottomColor = averageImageColorMasked(source, QRect(sourceRect.left(), sourceRect.bottom() + 1, sourceRect.width(), sampleBand), maskImage, &sampleCount);
+    if (sampleCount < minimumSamples) {
+        bottomColor = adaptiveFallbackColor;
+    }
+    QColor leftColor = averageImageColorMasked(source, QRect(sourceRect.left() - sampleBand, sourceRect.top(), sampleBand, sourceRect.height()), maskImage, &sampleCount);
+    if (sampleCount < minimumSamples) {
+        leftColor = adaptiveFallbackColor;
+    }
+    QColor rightColor = averageImageColorMasked(source, QRect(sourceRect.right() + 1, sourceRect.top(), sampleBand, sourceRect.height()), maskImage, &sampleCount);
+    if (sampleCount < minimumSamples) {
+        rightColor = adaptiveFallbackColor;
+    }
+    const QColor fallbackColor = adaptiveFallbackColor;
 
     QRandomGenerator generator(seed == 0 ? 0x6d2f4a1bu : seed);
     for (int y = 0; y < output.height(); ++y) {
@@ -113,38 +246,98 @@ QImage createRedactionFill(const QImage& source, const QRect& sourceRect, quint3
                 blue /= totalWeight;
             }
 
-            const int noise = generator.bounded(31) - 15;
-            const int grain = ((x * 13) + (y * 7) + static_cast<int>(seed & 0xffu)) % 11 - 5;
             QColor color(
-                qBound(0, qRound(red * 255.0) + noise + grain, 255),
-                qBound(0, qRound(green * 255.0) + noise / 2 + grain, 255),
-                qBound(0, qRound(blue * 255.0) + noise + grain / 2, 255),
+                qBound(0, qRound(red * 255.0), 255),
+                qBound(0, qRound(green * 255.0), 255),
+                qBound(0, qRound(blue * 255.0), 255),
                 255);
             output.setPixelColor(x, y, color);
         }
     }
 
+    const int blockBaseSize = qMax(4, pixelSize);
     QPainter painter(&output);
-    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::Antialiasing, false);
     painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+    painter.setPen(Qt::NoPen);
 
-    for (int index = 0; index < qMax(8, (output.width() * output.height()) / 1600); ++index) {
-        const QColor accent(
-            qBound(0, fallbackColor.red() + generator.bounded(35) - 17, 255),
-            qBound(0, fallbackColor.green() + generator.bounded(35) - 17, 255),
-            qBound(0, fallbackColor.blue() + generator.bounded(35) - 17, 255),
-            110 + generator.bounded(60));
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(accent);
-        const int width = qMax(6, generator.bounded(qMax(7, output.width() / 3)));
-        const int height = qMax(4, generator.bounded(qMax(5, output.height() / 4)));
-        painter.drawRoundedRect(generator.bounded(output.width()), generator.bounded(output.height()), width, height, 3.0, 3.0);
+    auto blockColorAt = [&](const QRect& blockRect) {
+        const QPoint center = blockRect.center();
+        const qreal horizontalRatio = output.width() <= 1 ? 0.5 : static_cast<qreal>(center.x()) / static_cast<qreal>(output.width() - 1);
+        const qreal verticalRatio = output.height() <= 1 ? 0.5 : static_cast<qreal>(center.y()) / static_cast<qreal>(output.height() - 1);
+
+        const qreal topMix = (1.0 - verticalRatio) * 0.45;
+        const qreal bottomMix = verticalRatio * 0.45;
+        const qreal leftMix = (1.0 - horizontalRatio) * 0.35;
+        const qreal rightMix = horizontalRatio * 0.35;
+        const qreal fallbackMix = 0.25;
+        const qreal totalMix = topMix + bottomMix + leftMix + rightMix + fallbackMix;
+
+        const qreal red = ((topColor.redF() * topMix) + (bottomColor.redF() * bottomMix) + (leftColor.redF() * leftMix) + (rightColor.redF() * rightMix) + (fallbackColor.redF() * fallbackMix)) / totalMix;
+        const qreal green = ((topColor.greenF() * topMix) + (bottomColor.greenF() * bottomMix) + (leftColor.greenF() * leftMix) + (rightColor.greenF() * rightMix) + (fallbackColor.greenF() * fallbackMix)) / totalMix;
+        const qreal blue = ((topColor.blueF() * topMix) + (bottomColor.blueF() * bottomMix) + (leftColor.blueF() * leftMix) + (rightColor.blueF() * rightMix) + (fallbackColor.blueF() * fallbackMix)) / totalMix;
+
+        const int variation = qMax(10, blockBaseSize + 8);
+        return QColor(
+            qBound(0, qRound(red * 255.0) + generator.bounded((variation * 2) + 1) - variation, 255),
+            qBound(0, qRound(green * 255.0) + generator.bounded((variation * 2) + 1) - variation, 255),
+            qBound(0, qRound(blue * 255.0) + generator.bounded((variation * 2) + 1) - variation, 255),
+            255);
+    };
+
+    for (int y = 0; y < output.height();) {
+        const int blockHeight = qMax(4, blockBaseSize + generator.bounded(blockBaseSize + 1) - (blockBaseSize / 2));
+        for (int x = 0; x < output.width();) {
+            const int blockWidth = qMax(4, blockBaseSize + generator.bounded(blockBaseSize + 1) - (blockBaseSize / 2));
+            const QRect blockRect(x, y, qMin(blockWidth, output.width() - x), qMin(blockHeight, output.height() - y));
+            const qreal stepSize = qMax<qreal>(2.0, qMin(blockRect.width(), blockRect.height()) / 3.0);
+            painter.setBrush(blockColorAt(blockRect));
+            painter.drawPath(createSteppedBlockPath(QRectF(blockRect), generator.bounded(4), stepSize));
+
+            if (blockRect.width() > 8 && blockRect.height() > 8 && generator.bounded(5) == 0) {
+                const QRect innerRect = blockRect.adjusted(1, 1, -qMax(1, blockRect.width() / 4), -qMax(1, blockRect.height() / 4));
+                if (innerRect.width() > 3 && innerRect.height() > 3) {
+                    QColor accent = blockColorAt(innerRect);
+                    accent = accent.lighter(112 + generator.bounded(18));
+                    painter.setBrush(accent);
+                    painter.drawPath(createSteppedBlockPath(QRectF(innerRect), generator.bounded(4), qMax<qreal>(2.0, stepSize / 2.0)));
+                }
+            }
+
+            x += blockRect.width();
+        }
+        y += blockHeight;
     }
 
-    painter.setPen(QPen(QColor(255, 255, 255, 32), 1));
-    for (int index = 0; index < qMax(5, output.height() / 14); ++index) {
-        const int y = generator.bounded(output.height());
-        painter.drawLine(0, y, output.width(), y + generator.bounded(5) - 2);
+    constexpr qreal kTau = 6.28318530717958647692;
+    const int fibreCount = qMax(18, (output.width() * output.height()) / 320);
+    painter.setBrush(Qt::NoBrush);
+    for (int index = 0; index < fibreCount; ++index) {
+        const QColor fibreColor(
+            generator.bounded(256),
+            generator.bounded(256),
+            generator.bounded(256),
+            72 + generator.bounded(40));
+        painter.setPen(QPen(fibreColor, 1.0));
+
+        const qreal startX = generator.bounded(output.width());
+        const qreal startY = generator.bounded(output.height());
+        const int segmentCount = 2 + generator.bounded(2);
+        const qreal baseLength = 3.0 + generator.bounded(5.0);
+        const qreal angle = generator.generateDouble() * kTau;
+
+        QPainterPath fibrePath(QPointF(startX, startY));
+        QPointF point(startX, startY);
+        for (int segment = 0; segment < segmentCount; ++segment) {
+            const qreal segmentAngle = angle + ((generator.generateDouble() - 0.5) * 1.1);
+            const qreal segmentLength = baseLength + generator.generateDouble() * 3.0;
+            point += QPointF(qCos(segmentAngle) * segmentLength, qSin(segmentAngle) * segmentLength);
+            point.setX(qBound(0.0, point.x(), static_cast<qreal>(output.width() - 1)));
+            point.setY(qBound(0.0, point.y(), static_cast<qreal>(output.height() - 1)));
+            fibrePath.lineTo(point);
+        }
+
+        painter.drawPath(fibrePath);
     }
 
     return output;
@@ -394,14 +587,72 @@ QImage CanvasWidget::renderDocumentImage() const {
     }
 
     QImage rendered = m_documentImage.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    const QImage obfuscationSourceImage = renderDocumentImageWithoutObfuscation();
+    const QImage obfuscationMaskImage = renderObfuscationMask();
     QPainter painter(&rendered);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
     for (const Annotation& annotation : m_annotations) {
-        drawAnnotation(painter, annotation, 1.0, &rendered);
+        drawAnnotation(painter, annotation, 1.0, &rendered, &obfuscationSourceImage, &obfuscationMaskImage);
     }
 
     return rendered;
+}
+
+QImage CanvasWidget::renderDocumentImageWithoutObfuscation() const {
+    if (!hasDocument()) {
+        return QImage();
+    }
+
+    QImage rendered = m_documentImage.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    QPainter painter(&rendered);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    for (const Annotation& annotation : m_annotations) {
+        if (annotation.type == AnnotationType::Pixelate) {
+            continue;
+        }
+        drawAnnotation(painter, annotation, 1.0, &rendered, nullptr, nullptr);
+    }
+
+    return rendered;
+}
+
+QImage CanvasWidget::renderObfuscationMask(const Annotation* previewAnnotation) const {
+    if (!hasDocument()) {
+        return QImage();
+    }
+
+    QImage maskImage(m_documentImage.size(), QImage::Format_ARGB32_Premultiplied);
+    maskImage.fill(Qt::transparent);
+    QPainter painter(&maskImage);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(Qt::white);
+
+    auto drawMaskRect = [&](const Annotation& annotation) {
+        if (annotation.type != AnnotationType::Pixelate) {
+            return;
+        }
+        const QRect sourceRect = normalizedClampedRect(annotation.start, annotation.end)
+            .toAlignedRect()
+            .adjusted(-kObfuscationSamplingSafetyMargin,
+                -kObfuscationSamplingSafetyMargin,
+                kObfuscationSamplingSafetyMargin,
+                kObfuscationSamplingSafetyMargin)
+            .intersected(maskImage.rect());
+        if (!sourceRect.isEmpty()) {
+            painter.drawRect(sourceRect);
+        }
+    };
+
+    for (const Annotation& annotation : m_annotations) {
+        drawMaskRect(annotation);
+    }
+    if (previewAnnotation != nullptr) {
+        drawMaskRect(*previewAnnotation);
+    }
+
+    return maskImage;
 }
 
 void CanvasWidget::setZoomFactor(double zoomFactor) {
@@ -1075,7 +1326,10 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     }
 
     const QRect targetRect(QPoint(0, 0), size());
+    const bool previewingObfuscation = m_isDrawingAnnotation && m_previewAnnotation.type == AnnotationType::Pixelate;
     const QImage renderedImage = renderDocumentImage();
+    const QImage obfuscationSourceImage = renderDocumentImageWithoutObfuscation();
+    const QImage obfuscationMaskImage = renderObfuscationMask(previewingObfuscation ? &m_previewAnnotation : nullptr);
     painter.drawImage(targetRect, renderedImage);
 
     if (m_activeTool == QStringLiteral("Cursor")) {
@@ -1097,7 +1351,7 @@ void CanvasWidget::paintEvent(QPaintEvent* event) {
     }
 
     if (m_isDrawingAnnotation) {
-        drawAnnotation(painter, m_previewAnnotation, m_zoomFactor, &renderedImage);
+        drawAnnotation(painter, m_previewAnnotation, m_zoomFactor, &renderedImage, &obfuscationSourceImage, &obfuscationMaskImage);
     }
 }
 
@@ -2161,6 +2415,9 @@ bool CanvasWidget::translateSelectedAnnotation(const QPointF& delta, bool groupU
 
     for (int index : m_selectedAnnotationIndices) {
         translateAnnotation(m_annotations[index], boundedDelta);
+        if (m_annotations[index].type == AnnotationType::Pixelate) {
+            m_annotations[index].effectSeed = QRandomGenerator::global()->generate();
+        }
     }
     if (groupUndoWithInteraction) {
         m_selectionMoved = true;
@@ -2242,6 +2499,9 @@ bool CanvasWidget::resizeSelectedAnnotation(ResizeHandle handle, const QPointF& 
         pushUndoState();
     }
 
+    if (resizedAnnotation.type == AnnotationType::Pixelate) {
+        resizedAnnotation.effectSeed = QRandomGenerator::global()->generate();
+    }
     m_annotations[m_primarySelectedAnnotationIndex] = resizedAnnotation;
     if (groupUndoWithInteraction) {
         m_selectionResized = true;
@@ -2434,7 +2694,12 @@ void CanvasWidget::commitAnnotation(const Annotation& annotation) {
     if (committed.type == AnnotationType::StepLabel && committed.stepSequence < 0) {
         committed.stepSequence = nextStepSequence();
     }
-    if (committed.type == AnnotationType::Pixelate && committed.effectSeed == 0) {
+    if (committed.type == AnnotationType::Pixelate) {
+        for (Annotation& existingAnnotation : m_annotations) {
+            if (existingAnnotation.type == AnnotationType::Pixelate) {
+                existingAnnotation.effectSeed = QRandomGenerator::global()->generate();
+            }
+        }
         committed.effectSeed = QRandomGenerator::global()->generate();
     }
     m_annotations.push_back(committed);
@@ -2527,7 +2792,7 @@ void CanvasWidget::updateUndoRedoState() {
     Q_EMIT redoAvailableChanged(canRedo());
 }
 
-void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotation, double scale, const QImage* composedImage) const {
+void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotation, double scale, const QImage* composedImage, const QImage* obfuscationSourceImage, const QImage* obfuscationMaskImage) const {
     QPen pen(annotation.strokeColor);
     pen.setWidth(qMax(1, qRound(annotation.strokeWidth * scale)));
     painter.setPen(pen);
@@ -2661,12 +2926,14 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
         rect.height() * scale);
 
     if (annotation.type == AnnotationType::Pixelate || annotation.type == AnnotationType::Blur || annotation.type == AnnotationType::Grayscale || annotation.type == AnnotationType::Magnify) {
-        const QImage& sourceImage = composedImage != nullptr ? *composedImage : m_documentImage;
+        const QImage& sourceImage = annotation.type == AnnotationType::Pixelate && obfuscationSourceImage != nullptr
+            ? *obfuscationSourceImage
+            : composedImage != nullptr ? *composedImage : m_documentImage;
         const QRect sourceRect = rect.toAlignedRect().intersected(sourceImage.rect());
         if (!sourceRect.isEmpty()) {
             QImage cropped;
             if (annotation.type == AnnotationType::Pixelate) {
-                cropped = createRedactionFill(sourceImage, sourceRect, annotation.effectSeed);
+                cropped = createRedactionFill(sourceImage, sourceRect, obfuscationMaskImage, annotation.effectSeed, annotation.pixelSize);
             } else if (annotation.type == AnnotationType::Blur) {
                 cropped = sourceImage.copy(sourceRect);
                 const int blurFactor = qMax(2, annotation.blurRadius);
@@ -2684,7 +2951,7 @@ void CanvasWidget::drawAnnotation(QPainter& painter, const Annotation& annotatio
                 cropped = cropped.copy(centerCrop.intersected(cropped.rect()));
             }
             painter.drawImage(scaledRect, cropped);
-            if (annotation.strokeWidth > 0) {
+            if (annotation.type != AnnotationType::Pixelate && annotation.strokeWidth > 0) {
                 painter.setPen(QPen(annotation.strokeColor, qMax(1, qRound(annotation.strokeWidth * scale))));
                 painter.drawRect(scaledRect);
             }
