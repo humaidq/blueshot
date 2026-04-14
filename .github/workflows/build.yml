@@ -61,10 +61,6 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Ninja
-        if: runner.os != 'Windows'
-        uses: seanmiddleditch/gha-setup-ninja@v6
-
       - name: Set up MSYS2
         if: matrix.build_env == 'msys2'
         uses: msys2/setup-msys2@v2
@@ -185,7 +181,109 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          wix build -arch ${{ matrix.wix_arch }} -b "BuildOutput=${env:GITHUB_WORKSPACE}\stage\bin" -out "${env:GITHUB_WORKSPACE}\dist\${{ matrix.installer_name }}" installer\windows\Blueshot.wxs
+          $sourceRoot = Join-Path $env:GITHUB_WORKSPACE 'stage\bin'
+          $generatedWxs = Join-Path $env:RUNNER_TEMP 'GeneratedFiles.wxs'
+
+          $dirMap = @{}
+          $dirMap[''] = 'INSTALLFOLDER'
+          $dirTree = @{}
+
+          function Get-HashId([string]$prefix, [string]$value) {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($value)
+            $hash = [System.Security.Cryptography.SHA256]::HashData($bytes)
+            $hex = [System.BitConverter]::ToString($hash).Replace('-', '')
+            return "$prefix$($hex.Substring(0, 16))"
+          }
+
+          function Add-DirectoryNode([string]$relativeDir) {
+            if ([string]::IsNullOrEmpty($relativeDir) -or $dirMap.ContainsKey($relativeDir)) {
+              return
+            }
+
+            $parentRel = Split-Path $relativeDir -Parent
+            if ($parentRel -eq '.' -or $null -eq $parentRel) {
+              $parentRel = ''
+            }
+
+            Add-DirectoryNode $parentRel
+
+            $dirId = Get-HashId 'DIR_' $relativeDir
+            $dirMap[$relativeDir] = $dirId
+
+            if (-not $dirTree.ContainsKey($parentRel)) {
+              $dirTree[$parentRel] = New-Object System.Collections.ArrayList
+            }
+
+            $null = $dirTree[$parentRel].Add([pscustomobject]@{
+              RelativeDir = $relativeDir
+              Name = [System.IO.Path]::GetFileName($relativeDir)
+              Id = $dirId
+            })
+          }
+
+          $files = Get-ChildItem -Path $sourceRoot -File -Recurse | Sort-Object FullName
+
+          foreach ($file in $files) {
+            $relativePath = $file.FullName.Substring($sourceRoot.Length).TrimStart('\\')
+            $relativeDir = Split-Path $relativePath -Parent
+            if ($relativeDir -eq '.' -or $null -eq $relativeDir) {
+              $relativeDir = ''
+            }
+            Add-DirectoryNode $relativeDir
+          }
+
+          $lines = New-Object System.Collections.Generic.List[string]
+          $lines.Add('<?xml version="1.0" encoding="UTF-8"?>')
+          $lines.Add('<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">')
+          $lines.Add('  <Fragment>')
+          $lines.Add('    <DirectoryRef Id="INSTALLFOLDER">')
+
+          function Write-DirectoryNodes([string]$parentRel, [int]$indent) {
+            if (-not $dirTree.ContainsKey($parentRel)) {
+              return
+            }
+
+            $children = @($dirTree[$parentRel] | Sort-Object RelativeDir)
+            foreach ($child in $children) {
+              $name = [System.Security.SecurityElement]::Escape($child.Name)
+              $padding = ' ' * $indent
+              $lines.Add('{0}<Directory Id="{1}" Name="{2}">' -f $padding, $child.Id, $name)
+              Write-DirectoryNodes $child.RelativeDir ($indent + 2)
+              $lines.Add('{0}</Directory>' -f $padding)
+            }
+          }
+
+          Write-DirectoryNodes '' 6
+
+          $lines.Add('    </DirectoryRef>')
+          $lines.Add('  </Fragment>')
+          $lines.Add('  <Fragment>')
+          $lines.Add('    <ComponentGroup Id="AppFiles">')
+
+          foreach ($file in $files) {
+            $relativePath = $file.FullName.Substring($sourceRoot.Length).TrimStart('\\')
+            $relativeDir = Split-Path $relativePath -Parent
+            if ($relativeDir -eq '.' -or $null -eq $relativeDir) {
+              $relativeDir = ''
+            }
+
+            $directoryId = $dirMap[$relativeDir]
+            $componentId = Get-HashId 'CMP_' $relativePath
+            $fileId = Get-HashId 'FIL_' $relativePath
+            $source = [System.Security.SecurityElement]::Escape($file.FullName)
+
+            $lines.Add('      <Component Id="{0}" Directory="{1}" Guid="*">' -f $componentId, $directoryId)
+            $lines.Add('        <File Id="{0}" Source="{1}" KeyPath="yes" />' -f $fileId, $source)
+            $lines.Add('      </Component>')
+          }
+
+          $lines.Add('    </ComponentGroup>')
+          $lines.Add('  </Fragment>')
+          $lines.Add('</Wix>')
+
+          [System.IO.File]::WriteAllLines($generatedWxs, $lines, [System.Text.UTF8Encoding]::new($false))
+
+          wix build -arch ${{ matrix.wix_arch }} -out "${env:GITHUB_WORKSPACE}\dist\${{ matrix.installer_name }}" installer\windows\Blueshot.wxs $generatedWxs
 
       - name: Create macOS archive
         if: runner.os == 'macOS'

@@ -20,10 +20,6 @@
       <Directory Id="BlueshotProgramMenuFolder" Name="Blueshot" />
     </StandardDirectory>
 
-    <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
-      <Files Include="!(bindpath.BuildOutput)\**" />
-    </ComponentGroup>
-
     <ComponentGroup Id="AppShortcuts" Directory="BlueshotProgramMenuFolder">
       <Component Guid="*">
         <Shortcut
