@@ -10,10 +10,22 @@ software developers, technical writers, testers and anyone else creating
 screenshots.
 
 Blueshot is made to be used alongside other tools, such as `grim` and `slurp`.
+This project currently only builds for Linux using Nix.
 
 This project is **not endorsed by the Greenshot team**, this is not a
 fully-fledged port, it only ports the editor feature and is licensed under the
-same GPL license.
+same GPL (v3) license. All Greenshot branding is removed.
+
+**Note:** This port was done with the use of LLMs. Please report bugs.
+
+## Changes from Greenshot
+
+- 2026-04-13: Ported Greenshot's editor to C++ with Qt. Preserving most
+  features of the editor only. Builds with Nix, and all Greenshot branding
+  removed (as per their requirements).
+- 2026-04-14: Updated obfuscate feature to be robust, creating a mask over the
+  photo of all obfuscated areas, and re-drawing all obfuscate blocks using the
+  closest un-obfuscated pixel for the colour palette.
 
 ## Usage
 
